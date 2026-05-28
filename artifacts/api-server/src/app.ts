@@ -30,6 +30,23 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+app.get("/", (_req, res) => {
+  res.json({
+    name: "Qwen API Gateway",
+    version: "1.0.0",
+    status: "ok",
+    docs: "https://platform.openai.com/docs/api-reference",
+    endpoints: {
+      chat: "POST /v1/chat/completions",
+      models: "GET /v1/models",
+      health: "GET /api/healthz",
+      register: "POST /api/auth/register",
+      login: "POST /api/auth/login",
+      apikeys: "GET/POST /api/apikeys",
+    },
+  });
+});
+
 app.use("/api", router);
 app.use("/v1", v1Router);
 

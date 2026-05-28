@@ -1,8 +1,11 @@
 import { MongoClient, type Db } from "mongodb";
 import { logger } from "./logger";
 
-const uri = process.env["MONGODB_URI"];
-const dbName = process.env["MONGODB_DATABASE"] ?? "manus";
+// Strip anything after a space — guards against Koyeb env vars being joined on one line
+// e.g. "mongodb+srv://...?w=majority MONGODB_DATABASE=manus" → "mongodb+srv://...?w=majority"
+const rawUri = process.env["MONGODB_URI"] ?? "";
+const uri = rawUri.split(" ")[0] || undefined;
+const dbName = process.env["MONGODB_DATABASE"]?.split(" ")[0] ?? "qwen_gateway";
 
 if (!uri) {
   logger.warn("MONGODB_URI not set — MongoDB features will be unavailable");
