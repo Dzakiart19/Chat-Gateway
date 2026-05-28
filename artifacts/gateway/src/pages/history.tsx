@@ -57,25 +57,25 @@ export default function History() {
   return (
     <div className="flex-1 flex flex-col overflow-auto bg-background">
       {/* Header */}
-      <div className="bg-card border-b border-border px-6 py-4">
-        <div className="flex items-center justify-between">
+      <div className="bg-card border-b border-border px-4 sm:px-6 py-4">
+        <div className="flex items-center justify-between gap-3">
           <div>
-            <h1 className="text-xl font-bold text-foreground">Request History</h1>
-            <p className="text-sm text-muted-foreground mt-0.5">All proxied requests and their responses</p>
+            <h1 className="text-lg sm:text-xl font-bold text-foreground">Request History</h1>
+            <p className="text-xs sm:text-sm text-muted-foreground mt-0.5">All proxied requests and their responses</p>
           </div>
           <button
             onClick={handleClear}
             disabled={!history?.length || clearHistory.isPending}
             data-testid="btn-clear-history"
-            className="flex items-center gap-2 px-4 py-2 border border-destructive/50 text-destructive text-sm rounded hover:bg-destructive/5 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 border border-destructive/50 text-destructive text-xs sm:text-sm rounded hover:bg-destructive/5 disabled:opacity-40 disabled:cursor-not-allowed transition-colors shrink-0"
           >
-            <Trash2 className="w-4 h-4" />
-            Clear all
+            <Trash2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+            <span className="hidden xs:inline">Clear all</span>
           </button>
         </div>
       </div>
 
-      <div className="flex-1 p-6 max-w-6xl mx-auto w-full">
+      <div className="flex-1 p-3 sm:p-6 max-w-6xl mx-auto w-full">
         {isLoading ? (
           <div className="flex items-center justify-center h-40 text-muted-foreground text-sm">Loading...</div>
         ) : !history || history.length === 0 ? (
@@ -85,8 +85,8 @@ export default function History() {
           </div>
         ) : (
           <div className="border border-border rounded-lg overflow-hidden bg-card shadow-sm">
-            {/* Table header */}
-            <div className="grid grid-cols-[32px_160px_80px_1fr_80px_80px_80px] bg-muted text-xs font-semibold text-muted-foreground uppercase tracking-wider border-b border-border">
+            {/* Desktop table header */}
+            <div className="hidden sm:grid sm:grid-cols-[32px_140px_70px_1fr_70px_70px_60px] bg-muted text-xs font-semibold text-muted-foreground uppercase tracking-wider border-b border-border">
               <div className="px-3 py-2.5" />
               <div className="px-3 py-2.5">Timestamp</div>
               <div className="px-3 py-2.5">Method</div>
@@ -98,13 +98,15 @@ export default function History() {
 
             {history.map((entry, i) => {
               const isExpanded = expandedId === entry.id;
-              const statusCls = entry.statusCode >= 200 && entry.statusCode < 300 ? "status-2xx" :
+              const statusCls =
+                entry.statusCode >= 200 && entry.statusCode < 300 ? "status-2xx" :
                 entry.statusCode >= 400 ? "status-4xx" : "status-err";
 
               return (
                 <div key={entry.id} className={i > 0 ? "border-t border-border" : ""}>
+                  {/* Desktop row */}
                   <div
-                    className={`grid grid-cols-[32px_160px_80px_1fr_80px_80px_80px] cursor-pointer hover:bg-muted/40 transition-colors text-sm ${isExpanded ? "bg-muted/30" : "bg-white"}`}
+                    className="hidden sm:grid sm:grid-cols-[32px_140px_70px_1fr_70px_70px_60px] cursor-pointer hover:bg-muted/40 transition-colors text-sm bg-white"
                     onClick={() => toggle(entry.id)}
                     data-testid={`history-row-${entry.id}`}
                   >
@@ -133,14 +135,42 @@ export default function History() {
                     </div>
                   </div>
 
+                  {/* Mobile row — card style */}
+                  <div
+                    className="sm:hidden flex items-center gap-3 px-3 py-3 cursor-pointer hover:bg-muted/40 transition-colors bg-white"
+                    onClick={() => toggle(entry.id)}
+                    data-testid={`history-row-mobile-${entry.id}`}
+                  >
+                    <div className="text-muted-foreground shrink-0">
+                      {isExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <MethodBadge method={entry.method} />
+                        <span className="font-mono text-xs text-foreground truncate">/{entry.endpoint}</span>
+                      </div>
+                      <div className="text-[11px] text-muted-foreground mt-0.5 font-mono">
+                        {format(new Date(entry.requestedAt), "HH:mm:ss")}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className={statusCls}>{entry.statusCode || "ERR"}</span>
+                      <span className="text-xs text-muted-foreground">{entry.responseTime}ms</span>
+                      <span className={`text-xs font-semibold ${entry.success ? "text-green-600" : "text-red-500"}`}>
+                        {entry.success ? "OK" : "FAIL"}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Expanded detail — shared between desktop and mobile */}
                   {isExpanded && (
-                    <div className="border-t border-border bg-background/60 p-5 space-y-4">
+                    <div className="border-t border-border bg-background/60 p-3 sm:p-5 space-y-4">
                       {entry.error && (
                         <div className="text-xs text-destructive bg-destructive/5 border border-destructive/20 rounded px-3 py-2">
                           Error: {entry.error}
                         </div>
                       )}
-                      <div className="grid grid-cols-2 gap-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div className="space-y-2">
                           <div className="flex items-center justify-between">
                             <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Request Payload</span>
@@ -153,7 +183,7 @@ export default function History() {
                             </button>
                           </div>
                           <div
-                            className="code-block max-h-64 overflow-auto"
+                            className="code-block max-h-64 overflow-auto text-xs"
                             dangerouslySetInnerHTML={{ __html: syntaxHighlight(entry.requestPayload ?? "null") }}
                           />
                         </div>
@@ -169,7 +199,7 @@ export default function History() {
                             </button>
                           </div>
                           <div
-                            className="code-block max-h-64 overflow-auto"
+                            className="code-block max-h-64 overflow-auto text-xs"
                             dangerouslySetInnerHTML={{ __html: syntaxHighlight(entry.responseBody ?? "null") }}
                           />
                         </div>
