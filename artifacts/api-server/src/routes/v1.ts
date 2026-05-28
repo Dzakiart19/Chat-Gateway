@@ -204,8 +204,14 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
     tool_choice?: string | { type: string; function?: { name: string } };
     temperature?: number;
     max_tokens?: number;
+    top_p?: number;
     stream?: boolean;
   };
+
+  // Clamp temperature to 0–2 range Qwen supports
+  const temperature = typeof _temp === "number"
+    ? Math.max(0, Math.min(2, _temp))
+    : 0.7;
 
   if (!messages || !Array.isArray(messages) || messages.length === 0) {
     res.status(400).json({ error: { message: "messages is required and must be a non-empty array", type: "invalid_request_error", code: "missing_messages" } });
@@ -229,6 +235,7 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
       headers,
       body: JSON.stringify({
         stream: true, incremental_output: true, chat_id: chatId, chat_mode: "normal", model,
+        temperature,
         parent_id: null,
         messages: [{
           fid: msgId, parentId: null, childrenIds: [], role: "user",
