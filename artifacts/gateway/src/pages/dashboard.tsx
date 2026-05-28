@@ -315,7 +315,7 @@ const client = new OpenAI({
 
             <div className="bg-muted/50 rounded-lg p-4 text-sm space-y-1.5">
               <div className="font-semibold text-foreground text-xs uppercase tracking-wider mb-2">Available models</div>
-              {["qwen3-235b-a22b", "qwen3.7-max", "qwen3-30b-a3b"].map(m => (
+              {["qwen3-235b-a22b", "qwen3-30b-a3b", "qwen3-7b", "qwen3-4b", "qwen-plus-latest", "qwen-max-latest", "qwen3.7-max"].map(m => (
                 <div key={m} className="flex items-center gap-2">
                   <div className="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0" />
                   <code className="text-xs font-mono text-foreground">{m}</code>
