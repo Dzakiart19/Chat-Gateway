@@ -102,10 +102,10 @@ function buildToolDefs(tools: Tool[]): string {
 // Inject tool instructions into messages
 // Strategy: prepend system block + append reminder to LAST user message
 function injectToolPrompt(
-  messages: Array<{ role: string; content?: string | null }>,
+  messages: Message[],
   tools: Tool[],
   toolChoice: string | { type: string; function?: { name: string } } | undefined,
-): Array<{ role: string; content?: string | null }> {
+): Message[] {
   const defs = buildToolDefs(tools);
 
   // Determine if a specific tool is forced
@@ -180,10 +180,40 @@ function detectToolCalls(raw: string): DetectedToolCall[] | null {
   }
 }
 
-function messagesToPrompt(messages: Array<{ role: string; content?: string | null }>): string {
+interface Message {
+  role: string;
+  content?: string | null;
+  tool_calls?: Array<{ id: string; type: string; function: { name: string; arguments: string } }>;
+  tool_call_id?: string;
+  name?: string;
+}
+
+function messagesToPrompt(messages: Message[]): string {
   return messages.map(m => {
-    const role = m.role === "assistant" ? "Assistant" : m.role === "system" ? "System" : "User";
-    return `${role}: ${m.content ?? ""}`;
+    if (m.role === "system") {
+      return `System: ${m.content ?? ""}`;
+    }
+    if (m.role === "assistant") {
+      if (m.tool_calls && m.tool_calls.length > 0) {
+        // Assistant requested tool calls — render as JSON so model understands history
+        const calls = m.tool_calls.map(tc => ({
+          id: tc.id,
+          name: tc.function.name,
+          arguments: (() => { try { return JSON.parse(tc.function.arguments); } catch { return tc.function.arguments; } })(),
+        }));
+        const toolJson = JSON.stringify({ tool_calls: calls });
+        const extra = m.content ? `${m.content}\n` : "";
+        return `Assistant: ${extra}${toolJson}`;
+      }
+      return `Assistant: ${m.content ?? ""}`;
+    }
+    if (m.role === "tool") {
+      // Tool result — label clearly so model understands it as tool output
+      const toolName = m.name ? ` (${m.name})` : "";
+      return `Tool Result${toolName} [id=${m.tool_call_id ?? "?"}]: ${m.content ?? ""}`;
+    }
+    // user or fallback
+    return `User: ${m.content ?? ""}`;
   }).join("\n");
 }
 
@@ -199,9 +229,9 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
     stream = false,
   } = req.body as {
     model?: string;
-    messages?: Array<{ role: string; content?: string | null }>;
+    messages?: Message[];
     tools?: Tool[];
-    tool_choice?: string | { type: string; function?: { name: string } };
+    tool_choice?: "none" | "auto" | "required" | { type: string; function?: { name: string } };
     temperature?: number;
     max_tokens?: number;
     top_p?: number;
@@ -218,7 +248,7 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
     return;
   }
 
-  const hasTools = Array.isArray(tools) && tools.length > 0;
+  const hasTools = Array.isArray(tools) && tools.length > 0 && _toolChoice !== "none";
   const effectiveMessages = hasTools ? injectToolPrompt(messages, tools!, _toolChoice) : messages;
   const id = `chatcmpl-${randomUUID().replace(/-/g, "").slice(0, 29)}`;
 
