@@ -78,14 +78,9 @@ else
     echo "$VALUE"
   }
 
-  MONGODB_URI=$(prompt_var "MONGODB_URI" "MongoDB connection string" "")
-  MONGODB_DATABASE=$(prompt_var "MONGODB_DATABASE" "MongoDB database name" "manus")
-  REDIS_HOST=$(prompt_var "REDIS_HOST" "Redis host" "localhost")
-  REDIS_PORT=$(prompt_var "REDIS_PORT" "Redis port" "6379")
-  REDIS_PASSWORD=$(prompt_var "REDIS_PASSWORD" "Redis password (leave blank if none)" " ")
-  POSTGRES_URL=$(prompt_var "POSTGRES_URL" "PostgreSQL connection string (optional)" " ")
+  MONGODB_URI=$(prompt_var "MONGODB_URI" "MongoDB connection string (mongodb+srv://...)" "")
+  MONGODB_DATABASE=$(prompt_var "MONGODB_DATABASE" "MongoDB database name" "qwen_gateway")
   JWT_SECRET=$(prompt_var "JWT_SECRET" "JWT secret key (any long random string)" "$(LC_ALL=C tr -dc 'A-Za-z0-9_-' < /dev/urandom 2>/dev/null | head -c 48 || echo "qwen-gateway-$(date +%s)-secret")")
-  SESSION_SECRET=$(prompt_var "SESSION_SECRET" "Session secret key" "$(LC_ALL=C tr -dc 'A-Za-z0-9_-' < /dev/urandom 2>/dev/null | head -c 48 || echo "session-$(date +%s)-secret")")
 
   cat > "$ENV_FILE" <<EOF
 # Qwen Gateway — Environment Variables
@@ -96,17 +91,8 @@ else
 MONGODB_URI=${MONGODB_URI}
 MONGODB_DATABASE=${MONGODB_DATABASE}
 
-# ── Redis ───────────────────────────────────────────────────────────────────
-REDIS_HOST=${REDIS_HOST}
-REDIS_PORT=${REDIS_PORT}
-REDIS_PASSWORD=${REDIS_PASSWORD}
-
-# ── PostgreSQL ──────────────────────────────────────────────────────────────
-POSTGRES_URL=${POSTGRES_URL}
-
 # ── Auth ────────────────────────────────────────────────────────────────────
 JWT_SECRET=${JWT_SECRET}
-SESSION_SECRET=${SESSION_SECRET}
 
 # ── Server ──────────────────────────────────────────────────────────────────
 NODE_ENV=production
@@ -128,24 +114,19 @@ else
 fi
 
 # ── 4. Build ──────────────────────────────────────────────────────────────────
-step "Running typecheck & build"
+step "Building API server"
 
-pnpm run typecheck 2>&1 | tail -5
-ok "Typecheck passed"
-
-echo ""
-info "Building API server..."
 (
   set -a
   # shellcheck source=/dev/null
   [ -f .env ] && source .env
   set +a
-  PORT=8080 pnpm --filter @workspace/api-server run build
-) 2>&1 | tail -3
+  pnpm --filter @workspace/api-server run build
+) 2>&1 | tail -5
 ok "API server built"
 
 echo ""
-info "Building frontend..."
+step "Building frontend"
 (
   set -a
   [ -f .env ] && source .env
@@ -175,11 +156,17 @@ echo -e "    POST  /api/auth/login             — sign in → JWT"
 echo -e "    POST  /api/apikeys                — generate API key (sk-dzcx...)"
 echo -e "    POST  /v1/chat/completions        — OpenAI-compatible chat"
 echo -e "    GET   /v1/models                  — list available models"
+echo -e "    GET   /v1/models/:model           — get model details"
+echo -e "    GET   /api/healthz                — health check"
 echo ""
-echo -e "  ${CYAN}Available models (no token required):${RESET}"
-echo -e "    • qwen3-235b-a22b  (fastest)"
-echo -e "    • qwen3.7-max"
+echo -e "  ${CYAN}Available models:${RESET}"
+echo -e "    • qwen3-235b-a22b    (default, most capable)"
 echo -e "    • qwen3-30b-a3b"
+echo -e "    • qwen3-7b"
+echo -e "    • qwen3-4b"
+echo -e "    • qwen-plus-latest"
+echo -e "    • qwen-max-latest"
+echo -e "    • qwen3.7-max"
 echo ""
 echo -e "  ${CYAN}Compatible with OpenAI SDK:${RESET}"
 cat <<'SNIPPET'
@@ -189,4 +176,7 @@ cat <<'SNIPPET'
       baseURL: "http://localhost:8080/v1",
     });
 SNIPPET
+echo ""
+echo -e "  ${CYAN}Deploy to Koyeb (free tier):${RESET}"
+echo -e "    See ${BOLD}DEPLOY.md${RESET} for step-by-step instructions."
 echo ""
