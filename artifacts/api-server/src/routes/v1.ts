@@ -90,7 +90,6 @@ interface DetectedToolCall {
   function: { name: string; arguments: string };
 }
 
-// Build compact tool definitions block
 function buildToolDefs(tools: Tool[]): string {
   return tools.map(t => {
     const f = t.function;
@@ -99,8 +98,6 @@ function buildToolDefs(tools: Tool[]): string {
   }).join("\n");
 }
 
-// Inject tool instructions into messages
-// Strategy: prepend system block + append reminder to LAST user message
 function injectToolPrompt(
   messages: Message[],
   tools: Tool[],
@@ -108,7 +105,6 @@ function injectToolPrompt(
 ): Message[] {
   const defs = buildToolDefs(tools);
 
-  // Determine if a specific tool is forced
   const forcedTool =
     typeof toolChoice === "object" && toolChoice?.type === "function"
       ? toolChoice.function?.name
@@ -126,7 +122,6 @@ RESPONSE FORMAT — when calling a tool, output ONLY this raw JSON (no markdown,
 
 When NOT calling a tool, respond normally in plain text.`;
 
-  // Build message list with system injected
   let result: Array<{ role: string; content?: string | null }>;
   const first = messages[0];
   if (first?.role === "system") {
@@ -138,7 +133,6 @@ When NOT calling a tool, respond normally in plain text.`;
     result = [{ role: "system", content: systemBlock }, ...messages];
   }
 
-  // Append a strong reminder to the last user message
   const lastIdx = result.length - 1;
   const last = result[lastIdx];
   if (last?.role === "user") {
@@ -154,11 +148,21 @@ When NOT calling a tool, respond normally in plain text.`;
   return result;
 }
 
-// Try to extract JSON tool_calls block from raw model response
+function injectJsonMode(messages: Message[]): Message[] {
+  const jsonInstruction =
+    "You MUST respond with a valid JSON object only. Do not include any explanation, markdown, or text outside the JSON structure.";
+  const first = messages[0];
+  if (first?.role === "system") {
+    return [
+      { role: "system", content: `${first.content ?? ""}\n\n${jsonInstruction}` },
+      ...messages.slice(1),
+    ];
+  }
+  return [{ role: "system", content: jsonInstruction }, ...messages];
+}
+
 function detectToolCalls(raw: string): DetectedToolCall[] | null {
-  // Strip optional code fences
   const cleaned = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
-  // Find first { ... } block
   const start = cleaned.indexOf("{");
   const end = cleaned.lastIndexOf("}");
   if (start === -1 || end === -1) return null;
@@ -195,7 +199,6 @@ function messagesToPrompt(messages: Message[]): string {
     }
     if (m.role === "assistant") {
       if (m.tool_calls && m.tool_calls.length > 0) {
-        // Assistant requested tool calls — render as JSON so model understands history
         const calls = m.tool_calls.map(tc => ({
           id: tc.id,
           name: tc.function.name,
@@ -208,16 +211,27 @@ function messagesToPrompt(messages: Message[]): string {
       return `Assistant: ${m.content ?? ""}`;
     }
     if (m.role === "tool") {
-      // Tool result — label clearly so model understands it as tool output
       const toolName = m.name ? ` (${m.name})` : "";
       return `Tool Result${toolName} [id=${m.tool_call_id ?? "?"}]: ${m.content ?? ""}`;
     }
-    // user or fallback
     return `User: ${m.content ?? ""}`;
   }).join("\n");
 }
 
-// POST /v1/chat/completions (OpenAI-compatible, with tool calling)
+// ── Model registry ───────────────────────────────────────────────────────────
+
+const MODELS = [
+  { id: "qwen3-235b-a22b",  object: "model", created: 1700000000, owned_by: "qwen" },
+  { id: "qwen3-30b-a3b",    object: "model", created: 1700000000, owned_by: "qwen" },
+  { id: "qwen3-7b",         object: "model", created: 1700000000, owned_by: "qwen" },
+  { id: "qwen3-4b",         object: "model", created: 1700000000, owned_by: "qwen" },
+  { id: "qwen-plus-latest", object: "model", created: 1700000000, owned_by: "qwen" },
+  { id: "qwen-max-latest",  object: "model", created: 1700000000, owned_by: "qwen" },
+  { id: "qwen3.7-max",      object: "model", created: 1700000000, owned_by: "qwen" },
+];
+
+// ── POST /v1/chat/completions ────────────────────────────────────────────────
+
 router.post("/chat/completions", requireApiKey, async (req, res) => {
   const {
     model = "qwen3-235b-a22b",
@@ -227,6 +241,17 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
     temperature: _temp,
     max_tokens: _max,
     stream = false,
+    stream_options,
+    response_format,
+    // Accepted but not forwarded (graceful ignore)
+    stop: _stop,
+    n: _n,
+    top_p: _topP,
+    presence_penalty: _pp,
+    frequency_penalty: _fp,
+    seed: _seed,
+    logprobs: _logprobs,
+    top_logprobs: _topLogprobs,
   } = req.body as {
     model?: string;
     messages?: Message[];
@@ -234,32 +259,73 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
     tool_choice?: "none" | "auto" | "required" | { type: string; function?: { name: string } };
     temperature?: number;
     max_tokens?: number;
-    top_p?: number;
     stream?: boolean;
+    stream_options?: { include_usage?: boolean };
+    response_format?: { type?: "text" | "json_object" };
+    stop?: string | string[] | null;
+    n?: number;
+    top_p?: number;
+    presence_penalty?: number;
+    frequency_penalty?: number;
+    seed?: number;
+    logprobs?: boolean | null;
+    top_logprobs?: number | null;
   };
 
-  // Clamp temperature to 0–2 range Qwen supports
   const temperature = typeof _temp === "number"
     ? Math.max(0, Math.min(2, _temp))
     : 0.7;
 
+  const includeUsage = stream_options?.include_usage === true;
+  const jsonMode = response_format?.type === "json_object";
+
   if (!messages || !Array.isArray(messages) || messages.length === 0) {
-    res.status(400).json({ error: { message: "messages is required and must be a non-empty array", type: "invalid_request_error", code: "missing_messages" } });
+    res.status(400).json({
+      error: {
+        message: "messages is required and must be a non-empty array",
+        type: "invalid_request_error",
+        param: "messages",
+        code: "missing_messages",
+      },
+    });
     return;
   }
 
   const hasTools = Array.isArray(tools) && tools.length > 0 && _toolChoice !== "none";
-  const effectiveMessages = hasTools ? injectToolPrompt(messages, tools!, _toolChoice) : messages;
+
+  let effectiveMessages = messages;
+  if (hasTools) effectiveMessages = injectToolPrompt(effectiveMessages, tools!, _toolChoice);
+  if (jsonMode && !hasTools) effectiveMessages = injectJsonMode(effectiveMessages);
+
   const id = `chatcmpl-${randomUUID().replace(/-/g, "").slice(0, 29)}`;
+  const created = Math.floor(Date.now() / 1000);
 
   // ── SSE helpers ─────────────────────────────────────────────────────────
   function sseChunk(delta: Record<string, unknown>, finishReason: string | null = null): string {
     const payload = {
       id,
       object: "chat.completion.chunk",
-      created: Math.floor(Date.now() / 1000),
+      created,
       model,
+      system_fingerprint: "fp_qwen_gateway",
       choices: [{ index: 0, delta, logprobs: null, finish_reason: finishReason }],
+    };
+    return `data: ${JSON.stringify(payload)}\n\n`;
+  }
+
+  function sseUsageChunk(inputTokens: number, outputTokens: number): string {
+    const payload = {
+      id,
+      object: "chat.completion.chunk",
+      created,
+      model,
+      system_fingerprint: "fp_qwen_gateway",
+      choices: [],
+      usage: {
+        prompt_tokens: inputTokens,
+        completion_tokens: outputTokens,
+        total_tokens: inputTokens + outputTokens,
+      },
     };
     return `data: ${JSON.stringify(payload)}\n\n`;
   }
@@ -301,7 +367,7 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
     if (stream) {
       startSSE();
 
-      // Tools: must buffer full response first to detect tool calls
+      // Tools: must buffer full response to detect tool calls
       if (hasTools) {
         const body = await r2.text();
         const { content, inputTokens, outputTokens } = parseQwenSSE(body);
@@ -315,18 +381,15 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
         const toolCalls = detectToolCalls(content);
 
         if (toolCalls) {
-          // Stream tool_calls deltas (OpenAI streaming format for tool calls)
           res.write(sseChunk({ role: "assistant", content: null }));
           for (let i = 0; i < toolCalls.length; i++) {
             const tc = toolCalls[i];
-            // First delta for this tool: id + name
             res.write(sseChunk({
               tool_calls: [{
                 index: i, id: tc.id, type: "function",
                 function: { name: tc.function.name, arguments: "" },
               }],
             }));
-            // Stream arguments in small chunks
             const args = tc.function.arguments;
             const chunkSize = 20;
             for (let j = 0; j < args.length; j += chunkSize) {
@@ -337,7 +400,6 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
           }
           res.write(sseChunk({}, "tool_calls"));
         } else {
-          // Fake-stream text content word by word
           res.write(sseChunk({ role: "assistant", content: "" }));
           const words = content.split(/(\s+)/);
           for (const word of words) {
@@ -346,6 +408,7 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
           res.write(sseChunk({}, "stop"));
         }
 
+        if (includeUsage) res.write(sseUsageChunk(inputTokens, outputTokens));
         res.write("data: [DONE]\n\n");
         res.end();
         return;
@@ -363,6 +426,8 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
       const reader = (r2.body as unknown as { getReader(): { read(): Promise<{ done: boolean; value?: Uint8Array }> } }).getReader();
       const decoder = new TextDecoder();
       let lineBuffer = "";
+      let ssInputTokens = 0;
+      let ssOutputTokens = 0;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -377,7 +442,12 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
           try {
             const chunk = JSON.parse(line.slice(5).trim()) as {
               choices?: Array<{ delta?: { content?: string; extra?: { output_schema?: string } } }>;
+              usage?: { input_tokens?: number; output_tokens?: number };
             };
+            if (chunk.usage) {
+              ssInputTokens = chunk.usage.input_tokens ?? ssInputTokens;
+              ssOutputTokens = chunk.usage.output_tokens ?? ssOutputTokens;
+            }
             const delta = chunk.choices?.[0]?.delta;
             const content = delta?.content ?? "";
             if (!content) continue;
@@ -389,18 +459,19 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
       }
 
       res.write(sseChunk({}, "stop"));
+      if (includeUsage) res.write(sseUsageChunk(ssInputTokens, ssOutputTokens));
       res.write("data: [DONE]\n\n");
       res.end();
       return;
     }
 
-    // ── NON-STREAMING path (original) ───────────────────────────────────────
+    // ── NON-STREAMING path ───────────────────────────────────────────────────
     const body = await r2.text();
     const { content, inputTokens, outputTokens } = parseQwenSSE(body);
 
     if (!content) {
       res.status(502).json({
-        error: { message: "No response from model", type: "upstream_error", code: "empty_response" }
+        error: { message: "No response from model", type: "upstream_error", code: "empty_response" },
       });
       return;
     }
@@ -411,8 +482,9 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
       res.json({
         id,
         object: "chat.completion",
-        created: Math.floor(Date.now() / 1000),
+        created,
         model,
+        system_fingerprint: "fp_qwen_gateway",
         choices: [{
           index: 0,
           message: { role: "assistant", content: null, tool_calls: toolCalls },
@@ -424,7 +496,6 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
           completion_tokens: outputTokens,
           total_tokens: inputTokens + outputTokens,
         },
-        system_fingerprint: "fp_qwen_gateway",
       });
       return;
     }
@@ -432,8 +503,9 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
     res.json({
       id,
       object: "chat.completion",
-      created: Math.floor(Date.now() / 1000),
+      created,
       model,
+      system_fingerprint: "fp_qwen_gateway",
       choices: [{
         index: 0,
         message: { role: "assistant", content },
@@ -445,12 +517,11 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
         completion_tokens: outputTokens,
         total_tokens: inputTokens + outputTokens,
       },
-      system_fingerprint: "fp_qwen_gateway",
     });
   } catch (err) {
     logger.error({ err }, "v1/chat/completions error");
     if (!res.headersSent) {
-      res.status(500).json({ error: { message: "Internal server error", type: "server_error" } });
+      res.status(500).json({ error: { message: "Internal server error", type: "server_error", code: "internal_error" } });
     } else {
       res.write(`data: ${JSON.stringify({ error: "Internal server error" })}\n\ndata: [DONE]\n\n`);
       res.end();
@@ -458,14 +529,28 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
   }
 });
 
-// GET /v1/models
+// ── GET /v1/models ───────────────────────────────────────────────────────────
+
 router.get("/models", requireApiKey, (_req, res) => {
-  const models = [
-    { id: "qwen3-235b-a22b", object: "model", created: 1700000000, owned_by: "qwen" },
-    { id: "qwen3.7-max", object: "model", created: 1700000000, owned_by: "qwen" },
-    { id: "qwen3-30b-a3b", object: "model", created: 1700000000, owned_by: "qwen" },
-  ];
-  res.json({ object: "list", data: models });
+  res.json({ object: "list", data: MODELS });
+});
+
+// ── GET /v1/models/:model ────────────────────────────────────────────────────
+
+router.get("/models/:model", requireApiKey, (req, res) => {
+  const found = MODELS.find(m => m.id === req.params.model);
+  if (!found) {
+    res.status(404).json({
+      error: {
+        message: `The model '${req.params.model}' does not exist`,
+        type: "invalid_request_error",
+        param: "model",
+        code: "model_not_found",
+      },
+    });
+    return;
+  }
+  res.json(found);
 });
 
 export default router;
