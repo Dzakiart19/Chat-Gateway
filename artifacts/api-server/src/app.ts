@@ -39,8 +39,8 @@ app.use("/v1", v1Router);
 const staticDir = path.join(__dirname, "public");
 if (existsSync(staticDir)) {
   app.use(express.static(staticDir));
-  // SPA fallback — all non-API routes serve index.html
-  app.get("*", (_req, res) => {
+  // SPA fallback — use middleware (not route) so Express 5 path-to-regexp is not involved
+  app.use((_req, res) => {
     res.sendFile(path.join(staticDir, "index.html"));
   });
 } else {
