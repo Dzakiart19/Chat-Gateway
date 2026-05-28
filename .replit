@@ -30,3 +30,10 @@ externalPort = 80
 [[ports]]
 localPort = 24845
 externalPort = 3000
+
+[userenv]
+
+[userenv.shared]
+MONGODB_DATABASE = "manus"
+REDIS_HOST = "redis-14320.c334.asia-southeast2-1.gce.cloud.redislabs.com"
+REDIS_PORT = "14320"
