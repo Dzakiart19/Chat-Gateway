@@ -47,6 +47,111 @@ interface ApiKeyInfo { id: string; name: string; prefix: string; suffix: string 
 
 function maskKey(prefix: string, suffix: string) { return `${prefix}${"*".repeat(12)}${suffix}`; }
 
+// ── Models block ─────────────────────────────────────────────────────────────
+
+function ModelsBlock({ apiKey }: { apiKey: string }) {
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [response, setResponse] = useState<unknown>(null);
+  const [statusCode, setStatusCode] = useState<number | null>(null);
+  const [responseTime, setResponseTime] = useState<number | null>(null);
+
+  const handleExecute = async () => {
+    if (!apiKey) { toast.error("Enter your API key first"); return; }
+    setLoading(true);
+    setResponse(null);
+    const start = Date.now();
+    try {
+      const res = await fetch(`${BASE}/v1/models`, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      setStatusCode(res.status);
+      setResponseTime(Date.now() - start);
+      setResponse(await res.json());
+    } catch {
+      setStatusCode(0);
+      setResponseTime(Date.now() - start);
+      setResponse({ error: { message: "Connection error" } });
+      toast.error("Connection error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const statusCls = statusCode === null ? "" : statusCode >= 200 && statusCode < 300 ? "status-2xx" : "status-4xx";
+  const curlStr = `curl -X GET '${typeof window !== "undefined" ? window.location.protocol + "//" + window.location.host : ""}${BASE}/v1/models' \\\n  -H 'Authorization: Bearer ${apiKey || "<YOUR_API_KEY>"}'`;
+
+  return (
+    <div className="rounded-xl border border-border bg-card shadow-sm overflow-hidden">
+      <button
+        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-muted/40 transition-colors text-left"
+        onClick={() => setOpen(p => !p)}
+      >
+        <span className="method-badge-get">GET</span>
+        <span className="font-mono text-sm font-medium text-foreground flex-1">/v1/models</span>
+        <span className="hidden sm:block text-xs text-muted-foreground">List available models</span>
+        {open ? <ChevronUp className="w-4 h-4 text-muted-foreground shrink-0" /> : <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />}
+      </button>
+
+      {open && (
+        <div className="border-t border-border">
+          <div className="px-3 sm:px-5 py-4 space-y-4">
+            <p className="text-sm text-muted-foreground">Returns the list of models available via this gateway. Requires a valid API key.</p>
+
+            <div className="flex gap-3">
+              <button
+                onClick={handleExecute}
+                disabled={loading}
+                className="flex items-center gap-2 px-6 py-2.5 bg-primary text-white text-sm font-semibold rounded-lg hover:bg-primary/90 disabled:opacity-60 transition-colors"
+              >
+                {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+                Execute
+              </button>
+              <button onClick={() => { setResponse(null); setStatusCode(null); setResponseTime(null); }} className="px-6 py-2.5 border border-border text-sm font-semibold rounded-lg hover:bg-muted transition-colors">Clear</button>
+            </div>
+
+            {(response !== null || loading) && (
+              <div className="space-y-3 pt-2 border-t border-border">
+                <h3 className="text-sm font-semibold text-foreground">Responses</h3>
+                <div>
+                  <div className="text-xs text-muted-foreground mb-1.5 font-medium uppercase tracking-wider">Curl</div>
+                  <CodeBlock content={curlStr} />
+                </div>
+                {loading ? (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground py-3">
+                    <Loader2 className="w-4 h-4 animate-spin" /> Awaiting response...
+                  </div>
+                ) : (
+                  <div className="border border-border rounded-lg overflow-hidden">
+                    <div className="hidden sm:grid sm:grid-cols-[80px_1fr] bg-muted text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                      <div className="px-4 py-2 border-r border-border">Code</div>
+                      <div className="px-4 py-2">Details</div>
+                    </div>
+                    <div className="sm:grid sm:grid-cols-[80px_1fr] border-t border-border bg-white">
+                      <div className="px-4 py-3 sm:border-r sm:border-border flex items-center gap-2 border-b border-border sm:border-b-0">
+                        <span className={statusCls}>{statusCode ?? "—"}</span>
+                      </div>
+                      <div className="px-4 py-3 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-muted-foreground font-medium">
+                            Response body {responseTime !== null && <span className="ml-2 text-primary">{responseTime}ms</span>}
+                          </span>
+                          <button onClick={() => { navigator.clipboard.writeText(JSON.stringify(response, null, 2)); toast.success("Copied"); }} className="text-xs px-2 py-0.5 border border-border rounded hover:bg-muted transition-colors">Copy</button>
+                        </div>
+                        <div className="code-block overflow-x-auto" dangerouslySetInnerHTML={{ __html: syntaxHighlight(JSON.stringify(response, null, 2)) }} />
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main playground ──────────────────────────────────────────────────────────
 
 export default function Playground() {
@@ -394,29 +499,8 @@ export default function Playground() {
           )}
         </div>
 
-        {/* Models reference */}
-        <div className="rounded-xl border border-border bg-card shadow-sm overflow-hidden">
-          <button
-            className="w-full flex items-center gap-3 px-4 py-3 hover:bg-muted/40 transition-colors text-left"
-            onClick={() => {}}
-          >
-            <span className="method-badge-get">GET</span>
-            <span className="font-mono text-sm font-medium text-foreground flex-1">/v1/models</span>
-            <span className="text-xs text-muted-foreground">List Models</span>
-          </button>
-          <div className="border-t border-border px-4 py-4 bg-background/40">
-            <div className="text-xs text-muted-foreground mb-3">Available models (all free, no token needed):</div>
-            <div className="space-y-2">
-              {WORKING_MODELS.map(m => (
-                <div key={m.id} className="flex items-center gap-3 py-2 px-3 border border-border rounded-lg bg-white">
-                  <div className="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0" />
-                  <code className="text-sm font-mono text-foreground">{m.id}</code>
-                  <span className="text-xs text-green-600 font-medium ml-auto">Active</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
+        {/* Models endpoint */}
+        <ModelsBlock apiKey={apiKey} />
 
       </div>
     </div>
