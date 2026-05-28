@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface HealthStatus {
-  status: string;
-}
+/**
+ * The request body to forward
+ */
+export type ProxyRequestInputPayload = { [key: string]: unknown };

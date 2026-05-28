@@ -3,13 +3,15 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Qwen API Gateway Wrapper
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: gateway
+    description: API gateway proxy operations
 paths:
   /healthz:
     get:
@@ -24,6 +26,72 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /gateway/proxy:
+    post:
+      operationId: proxyRequest
+      tags: [gateway]
+      summary: Proxy a request to the Qwen API
+      description: Forwards the request to chat.qwen.ai/api/v2 and returns the response
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProxyRequestInput"
+      responses:
+        "200":
+          description: Proxy response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProxyResponse"
+
+  /gateway/history:
+    get:
+      operationId: getHistory
+      tags: [gateway]
+      summary: Get request/response history
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+          description: Max number of records to return
+      responses:
+        "200":
+          description: History list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/HistoryEntry"
+    delete:
+      operationId: clearHistory
+      tags: [gateway]
+      summary: Clear all history
+      responses:
+        "200":
+          description: Cleared
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClearResult"
+
+  /gateway/stats:
+    get:
+      operationId: getStats
+      tags: [gateway]
+      summary: Get gateway statistics
+      responses:
+        "200":
+          description: Stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GatewayStats"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +102,157 @@ components:
       required:
         - status
 
+    ToolDefinition:
+      type: object
+      properties:
+        type:
+          type: string
+        function:
+          type: object
+          properties:
+            name:
+              type: string
+            description:
+              type: string
+            parameters:
+              type: object
+          required:
+            - name
+      required:
+        - type
+        - function
+
+    ChatMessage:
+      type: object
+      properties:
+        role:
+          type: string
+        content:
+          type: ["string", "null"]
+        name:
+          type: ["string", "null"]
+        tool_calls:
+          type: ["array", "null"]
+          items:
+            type: object
+        tool_call_id:
+          type: ["string", "null"]
+      required:
+        - role
+
+    ProxyRequestInput:
+      type: object
+      properties:
+        token:
+          type: string
+          description: Bearer token for Qwen API authentication
+        endpoint:
+          type: string
+          description: The endpoint path to proxy to (e.g. chat/completions)
+        method:
+          type: string
+          description: HTTP method
+        payload:
+          type: object
+          description: The request body to forward
+        extraHeaders:
+          type: object
+          description: Additional headers to pass through
+      required:
+        - token
+        - endpoint
+        - method
+
+    ProxyResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        success:
+          type: boolean
+        statusCode:
+          type: integer
+        requestedAt:
+          type: string
+        responseTime:
+          type: integer
+        endpoint:
+          type: string
+        method:
+          type: string
+        requestPayload:
+          type: object
+        responseBody:
+          type: object
+        responseHeaders:
+          type: object
+        error:
+          type: ["string", "null"]
+      required:
+        - id
+        - success
+        - statusCode
+        - requestedAt
+        - responseTime
+        - endpoint
+        - method
+
+    HistoryEntry:
+      type: object
+      properties:
+        id:
+          type: string
+        success:
+          type: boolean
+        statusCode:
+          type: integer
+        requestedAt:
+          type: string
+        responseTime:
+          type: integer
+        endpoint:
+          type: string
+        method:
+          type: string
+        requestPayload:
+          type: object
+        responseBody:
+          type: object
+        error:
+          type: ["string", "null"]
+      required:
+        - id
+        - success
+        - statusCode
+        - requestedAt
+        - responseTime
+        - endpoint
+        - method
+
+    GatewayStats:
+      type: object
+      properties:
+        totalRequests:
+          type: integer
+        successCount:
+          type: integer
+        failureCount:
+          type: integer
+        avgResponseTime:
+          type: integer
+        lastRequestAt:
+          type: ["string", "null"]
+      required:
+        - totalRequests
+        - successCount
+        - failureCount
+        - avgResponseTime
+        - lastRequestAt
+
+    ClearResult:
+      type: object
+      properties:
+        cleared:
+          type: integer
+      required:
+        - cleared

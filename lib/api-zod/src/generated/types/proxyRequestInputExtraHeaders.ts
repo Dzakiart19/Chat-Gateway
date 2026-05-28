@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface HealthStatus {
-  status: string;
-}
+/**
+ * Additional headers to pass through
+ */
+export type ProxyRequestInputExtraHeaders = { [key: string]: unknown };
