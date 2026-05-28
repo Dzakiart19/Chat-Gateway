@@ -1,6 +1,8 @@
 import express, { type Express } from "express";
 import cors from "cors";
 import pinoHttp from "pino-http";
+import path from "node:path";
+import { existsSync } from "node:fs";
 import router from "./routes";
 import v1Router from "./routes/v1";
 import { logger } from "./lib/logger";
@@ -30,24 +32,35 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-app.get("/", (_req, res) => {
-  res.json({
-    name: "Qwen API Gateway",
-    version: "1.0.0",
-    status: "ok",
-    docs: "https://platform.openai.com/docs/api-reference",
-    endpoints: {
-      chat: "POST /v1/chat/completions",
-      models: "GET /v1/models",
-      health: "GET /api/healthz",
-      register: "POST /api/auth/register",
-      login: "POST /api/auth/login",
-      apikeys: "GET/POST /api/apikeys",
-    },
-  });
-});
-
 app.use("/api", router);
 app.use("/v1", v1Router);
+
+// Serve React frontend (built by Vite into dist/public)
+const staticDir = path.join(__dirname, "public");
+if (existsSync(staticDir)) {
+  app.use(express.static(staticDir));
+  // SPA fallback — all non-API routes serve index.html
+  app.get("*", (_req, res) => {
+    res.sendFile(path.join(staticDir, "index.html"));
+  });
+} else {
+  // No frontend build present — show API info
+  app.get("/", (_req, res) => {
+    res.json({
+      name: "Qwen API Gateway",
+      version: "1.0.0",
+      status: "ok",
+      docs: "https://platform.openai.com/docs/api-reference",
+      endpoints: {
+        chat: "POST /v1/chat/completions",
+        models: "GET /v1/models",
+        health: "GET /api/healthz",
+        register: "POST /api/auth/register",
+        login: "POST /api/auth/login",
+        apikeys: "GET/POST /api/apikeys",
+      },
+    });
+  });
+}
 
 export default app;

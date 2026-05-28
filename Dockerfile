@@ -10,10 +10,11 @@ WORKDIR /app
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY tsconfig.base.json tsconfig.json ./
 
-# Only workspace packages needed by api-server
-COPY lib/db/package.json        ./lib/db/
-COPY lib/api-zod/package.json   ./lib/api-zod/
+COPY lib/db/package.json              ./lib/db/
+COPY lib/api-zod/package.json         ./lib/api-zod/
+COPY lib/api-client-react/package.json ./lib/api-client-react/
 COPY artifacts/api-server/package.json ./artifacts/api-server/
+COPY artifacts/gateway/package.json   ./artifacts/gateway/
 
 RUN pnpm install --frozen-lockfile
 
@@ -21,11 +22,20 @@ RUN pnpm install --frozen-lockfile
 FROM deps AS builder
 WORKDIR /app
 
-COPY lib/db/     ./lib/db/
-COPY lib/api-zod/ ./lib/api-zod/
+COPY lib/db/              ./lib/db/
+COPY lib/api-zod/         ./lib/api-zod/
+COPY lib/api-client-react/ ./lib/api-client-react/
 COPY artifacts/api-server/ ./artifacts/api-server/
+COPY artifacts/gateway/    ./artifacts/gateway/
 
+# Build frontend (PORT is required by vite.config validation but unused at build time)
+RUN PORT=3000 BASE_PATH=/ pnpm --filter @workspace/gateway build
+
+# Build backend
 RUN pnpm --filter @workspace/api-server run build
+
+# Copy frontend into backend's dist so Express can serve it
+RUN cp -r ./artifacts/gateway/dist/public ./artifacts/api-server/dist/public
 
 # ── Production image ─────────────────────────────────────────────────────────
 FROM node:22-alpine AS runner
@@ -34,7 +44,6 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=8000
 
-# Copy bundled output (includes pino worker files)
 COPY --from=builder /app/artifacts/api-server/dist ./dist
 
 EXPOSE 8000
