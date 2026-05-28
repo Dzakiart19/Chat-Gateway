@@ -252,6 +252,26 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
   const effectiveMessages = hasTools ? injectToolPrompt(messages, tools!, _toolChoice) : messages;
   const id = `chatcmpl-${randomUUID().replace(/-/g, "").slice(0, 29)}`;
 
+  // ── SSE helpers ─────────────────────────────────────────────────────────
+  function sseChunk(delta: Record<string, unknown>, finishReason: string | null = null): string {
+    const payload = {
+      id,
+      object: "chat.completion.chunk",
+      created: Math.floor(Date.now() / 1000),
+      model,
+      choices: [{ index: 0, delta, logprobs: null, finish_reason: finishReason }],
+    };
+    return `data: ${JSON.stringify(payload)}\n\n`;
+  }
+
+  function startSSE() {
+    res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders();
+  }
+
   try {
     const midtoken = await getMidtoken();
     const headers = qwenHeaders(midtoken);
@@ -277,6 +297,104 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
       }),
     });
 
+    // ── STREAMING path ──────────────────────────────────────────────────────
+    if (stream) {
+      startSSE();
+
+      // Tools: must buffer full response first to detect tool calls
+      if (hasTools) {
+        const body = await r2.text();
+        const { content, inputTokens, outputTokens } = parseQwenSSE(body);
+
+        if (!content) {
+          res.write(`data: ${JSON.stringify({ error: "No response from model" })}\n\ndata: [DONE]\n\n`);
+          res.end();
+          return;
+        }
+
+        const toolCalls = detectToolCalls(content);
+
+        if (toolCalls) {
+          // Stream tool_calls deltas (OpenAI streaming format for tool calls)
+          res.write(sseChunk({ role: "assistant", content: null }));
+          for (let i = 0; i < toolCalls.length; i++) {
+            const tc = toolCalls[i];
+            // First delta for this tool: id + name
+            res.write(sseChunk({
+              tool_calls: [{
+                index: i, id: tc.id, type: "function",
+                function: { name: tc.function.name, arguments: "" },
+              }],
+            }));
+            // Stream arguments in small chunks
+            const args = tc.function.arguments;
+            const chunkSize = 20;
+            for (let j = 0; j < args.length; j += chunkSize) {
+              res.write(sseChunk({
+                tool_calls: [{ index: i, function: { arguments: args.slice(j, j + chunkSize) } }],
+              }));
+            }
+          }
+          res.write(sseChunk({}, "tool_calls"));
+        } else {
+          // Fake-stream text content word by word
+          res.write(sseChunk({ role: "assistant", content: "" }));
+          const words = content.split(/(\s+)/);
+          for (const word of words) {
+            if (word) res.write(sseChunk({ content: word }));
+          }
+          res.write(sseChunk({}, "stop"));
+        }
+
+        res.write("data: [DONE]\n\n");
+        res.end();
+        return;
+      }
+
+      // No tools: true SSE streaming — pipe Qwen SSE → OpenAI SSE
+      if (!r2.body) {
+        res.write(`data: ${JSON.stringify({ error: "No response body" })}\n\ndata: [DONE]\n\n`);
+        res.end();
+        return;
+      }
+
+      res.write(sseChunk({ role: "assistant", content: "" }));
+
+      const reader = (r2.body as unknown as { getReader(): { read(): Promise<{ done: boolean; value?: Uint8Array }> } }).getReader();
+      const decoder = new TextDecoder();
+      let lineBuffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        lineBuffer += decoder.decode(value, { stream: true });
+
+        const lines = lineBuffer.split("\n");
+        lineBuffer = lines.pop() ?? "";
+
+        for (const line of lines) {
+          if (!line.startsWith("data:")) continue;
+          try {
+            const chunk = JSON.parse(line.slice(5).trim()) as {
+              choices?: Array<{ delta?: { content?: string; extra?: { output_schema?: string } } }>;
+            };
+            const delta = chunk.choices?.[0]?.delta;
+            const content = delta?.content ?? "";
+            if (!content) continue;
+            const schema = delta?.extra?.output_schema ?? "";
+            if (schema && schema !== "answer") continue;
+            res.write(sseChunk({ content }));
+          } catch { /* skip malformed */ }
+        }
+      }
+
+      res.write(sseChunk({}, "stop"));
+      res.write("data: [DONE]\n\n");
+      res.end();
+      return;
+    }
+
+    // ── NON-STREAMING path (original) ───────────────────────────────────────
     const body = await r2.text();
     const { content, inputTokens, outputTokens } = parseQwenSSE(body);
 
@@ -287,7 +405,6 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
       return;
     }
 
-    // ── Detect tool calls in response ──────────────────────────────────────
     const toolCalls = hasTools ? detectToolCalls(content) : null;
 
     if (toolCalls) {
@@ -298,11 +415,7 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
         model,
         choices: [{
           index: 0,
-          message: {
-            role: "assistant",
-            content: null,
-            tool_calls: toolCalls,
-          },
+          message: { role: "assistant", content: null, tool_calls: toolCalls },
           logprobs: null,
           finish_reason: "tool_calls",
         }],
@@ -316,7 +429,6 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
       return;
     }
 
-    // ── Normal text response ───────────────────────────────────────────────
     res.json({
       id,
       object: "chat.completion",
@@ -337,7 +449,12 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
     });
   } catch (err) {
     logger.error({ err }, "v1/chat/completions error");
-    res.status(500).json({ error: { message: "Internal server error", type: "server_error" } });
+    if (!res.headersSent) {
+      res.status(500).json({ error: { message: "Internal server error", type: "server_error" } });
+    } else {
+      res.write(`data: ${JSON.stringify({ error: "Internal server error" })}\n\ndata: [DONE]\n\n`);
+      res.end();
+    }
   }
 });
 
