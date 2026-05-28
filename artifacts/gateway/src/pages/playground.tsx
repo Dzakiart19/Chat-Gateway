@@ -1,30 +1,16 @@
-import { useState } from "react";
-import {
-  useKeylessChat,
-  useProxyRequest,
-  useGetStats,
-  getGetStatsQueryKey,
-} from "@workspace/api-client-react";
-import { ChevronDown, ChevronUp, Copy, Check, Loader2, Zap } from "lucide-react";
+import { useState, useEffect } from "react";
+import { ChevronDown, ChevronUp, Copy, Check, Loader2, Zap, Key } from "lucide-react";
 import { toast } from "sonner";
-import { useQueryClient } from "@tanstack/react-query";
+import { apiFetch, getUser } from "@/lib/auth";
+import { Link } from "wouter";
 
-// ── helpers ────────────────────────────────────────────────────────────────
+const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 const WORKING_MODELS = [
-  { id: "qwen3-235b-a22b", label: "Qwen3 235B A22B (Fastest free)" },
-  { id: "qwen3.7-max", label: "Qwen3.7 Max" },
-  { id: "qwen3-30b-a3b", label: "Qwen3 30B A3B" },
+  { id: "qwen3-235b-a22b", label: "qwen3-235b-a22b" },
+  { id: "qwen3.7-max", label: "qwen3.7-max" },
+  { id: "qwen3-30b-a3b", label: "qwen3-30b-a3b" },
 ];
-
-function MethodBadge({ method }: { method: string }) {
-  const m = method.toUpperCase();
-  const cls =
-    m === "GET" ? "method-badge-get" :
-    m === "POST" ? "method-badge-post" :
-    "method-badge-put";
-  return <span className={cls}>{m}</span>;
-}
 
 function syntaxHighlight(json: unknown): string {
   const str = typeof json === "string" ? json : JSON.stringify(json, null, 2);
@@ -42,504 +28,396 @@ function syntaxHighlight(json: unknown): string {
     );
 }
 
-function CodeBlock({ content }: { content: string }) {
+function CodeBlock({ content, lang = "" }: { content: string; lang?: string }) {
   const [copied, setCopied] = useState(false);
-  const copy = () => {
-    navigator.clipboard.writeText(content).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); });
-  };
   return (
-    <div className="relative">
-      <div className="code-block overflow-x-auto" dangerouslySetInnerHTML={{ __html: syntaxHighlight(content) }} />
-      <button onClick={copy} data-testid="btn-copy-code" className="absolute top-2 right-2 p-1.5 rounded bg-white/10 hover:bg-white/20 text-white/70 hover:text-white transition-colors">
+    <div className="relative group">
+      <pre className={`bg-gray-950 text-gray-100 rounded-lg p-4 text-xs font-mono overflow-x-auto leading-relaxed ${lang === "json" ? "" : ""}`}>{content}</pre>
+      <button
+        onClick={() => { navigator.clipboard.writeText(content); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
+        className="absolute top-2 right-2 p-1.5 rounded bg-white/10 hover:bg-white/20 text-white/70 hover:text-white transition-colors opacity-0 group-hover:opacity-100"
+      >
         {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
       </button>
     </div>
   );
 }
 
-// ── Response display ────────────────────────────────────────────────────────
+interface ApiKeyInfo { id: string; name: string; prefix: string; suffix: string }
 
-interface GatewayResponse {
-  success: boolean;
-  statusCode: number;
-  responseTime: number;
-  responseBody: unknown;
-  error: string | null;
-}
+function maskKey(prefix: string, suffix: string) { return `${prefix}${"*".repeat(12)}${suffix}`; }
 
-function ResponseSection({ res, isPending, endpoint, curlStr }: {
-  res: GatewayResponse | null;
-  isPending: boolean;
-  endpoint: string;
-  curlStr: string;
-}) {
-  const requestUrl = `https://chat.qwen.ai/api/v2/${endpoint.replace(/^\//, "")}`;
-  const statusCls = !res ? "" :
-    res.statusCode === 200 ? "status-2xx" :
-    res.statusCode >= 400 ? "status-4xx" : "status-err";
+// ── Main playground ──────────────────────────────────────────────────────────
 
-  return (
-    <div className="border-t border-border px-3 sm:px-5 py-4 space-y-4 bg-background/30">
-      <h3 className="text-sm font-semibold text-foreground">Responses</h3>
-
-      <div>
-        <div className="text-xs text-muted-foreground mb-1 font-medium">Curl</div>
-        <CodeBlock content={curlStr} />
-      </div>
-
-      <div>
-        <div className="text-xs text-muted-foreground mb-1 font-medium">Request URL</div>
-        <div className="code-block break-all text-xs sm:text-sm">{requestUrl}</div>
-      </div>
-
-      <div>
-        <div className="text-xs text-muted-foreground mb-2 font-medium">Server response</div>
-        {isPending && !res ? (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground py-3">
-            <Loader2 className="w-4 h-4 animate-spin" /><span>Awaiting response...</span>
-          </div>
-        ) : res ? (
-          <div className="border border-border rounded-md overflow-hidden">
-            <div className="hidden sm:grid sm:grid-cols-[80px_1fr] bg-muted text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-              <div className="px-4 py-2 border-r border-border">Code</div>
-              <div className="px-4 py-2">Details</div>
-            </div>
-            <div className="sm:grid sm:grid-cols-[80px_1fr] border-t border-border bg-white">
-              <div className="px-4 py-3 sm:border-r sm:border-border flex items-center gap-2 sm:items-start sm:pt-4 border-b border-border sm:border-b-0">
-                <span className="text-xs font-semibold text-muted-foreground sm:hidden">Code:</span>
-                <span className={statusCls}>{res.statusCode || "ERR"}</span>
-              </div>
-              <div className="px-3 sm:px-4 py-3 space-y-3">
-                <div className="flex items-center justify-between flex-wrap gap-2">
-                  <div className="text-xs text-muted-foreground font-medium">Response body</div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs text-muted-foreground">{res.responseTime}ms</span>
-                    <button
-                      onClick={() => { navigator.clipboard.writeText(JSON.stringify(res.responseBody, null, 2)); toast.success("Copied"); }}
-                      data-testid="btn-copy-response"
-                      className="text-xs px-2 py-0.5 border border-border rounded hover:bg-muted transition-colors"
-                    >Copy</button>
-                    <button
-                      onClick={() => {
-                        const blob = new Blob([JSON.stringify(res.responseBody, null, 2)], { type: "application/json" });
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement("a");
-                        a.href = url; a.download = "response.json"; a.click();
-                        URL.revokeObjectURL(url);
-                      }}
-                      data-testid="btn-download-response"
-                      className="text-xs px-2 py-0.5 border border-border rounded hover:bg-muted transition-colors"
-                    >Download</button>
-                  </div>
-                </div>
-                <div className="code-block overflow-x-auto" dangerouslySetInnerHTML={{ __html: syntaxHighlight(JSON.stringify(res.responseBody, null, 2) || "null") }} />
-                {res.error && (
-                  <div className="text-xs text-destructive bg-destructive/5 border border-destructive/20 rounded px-3 py-2">{res.error}</div>
-                )}
-              </div>
-            </div>
-          </div>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-// ── Keyless Chat Block ──────────────────────────────────────────────────────
-
-function KeylessChatBlock() {
-  const [open, setOpen] = useState(true);
+export default function Playground() {
+  const user = getUser();
   const [model, setModel] = useState("qwen3-235b-a22b");
   const [messages, setMessages] = useState(JSON.stringify([
     { role: "user", content: "Hello! What is 2 + 2?" }
   ], null, 2));
   const [systemPrompt, setSystemPrompt] = useState("");
-  const [response, setResponse] = useState<GatewayResponse | null>(null);
-  const [showResponse, setShowResponse] = useState(false);
+  const [temperature, setTemperature] = useState("0.7");
+  const [apiKey, setApiKey] = useState("");
+  const [userKeys, setUserKeys] = useState<ApiKeyInfo[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [response, setResponse] = useState<unknown>(null);
+  const [responseTime, setResponseTime] = useState<number | null>(null);
+  const [statusCode, setStatusCode] = useState<number | null>(null);
+  const [showEndpoint, setShowEndpoint] = useState(true);
 
-  const keylessChat = useKeylessChat();
-  const queryClient = useQueryClient();
+  // Load user's API keys
+  useEffect(() => {
+    apiFetch("/api/apikeys").then(async r => {
+      if (r.ok) {
+        const keys = await r.json() as ApiKeyInfo[];
+        setUserKeys(keys);
+        if (keys.length > 0 && !apiKey) {
+          // Don't pre-fill the actual key — it's masked. User must go to dashboard to copy the full key.
+        }
+      }
+    }).catch(() => {});
+  }, []);
 
-  const handleExecute = () => {
-    let parsedMessages: Array<{ role: string; content: string }>;
-    try {
-      parsedMessages = JSON.parse(messages);
-    } catch {
-      toast.error("Invalid JSON in messages field");
-      return;
-    }
+  const parsedMessages = (() => { try { return JSON.parse(messages); } catch { return null; } })();
+  const isValidJson = parsedMessages !== null;
+
+  const handleExecute = async () => {
+    if (!apiKey) { toast.error("Enter your API key first. Get one from the Dashboard."); return; }
+    if (!isValidJson) { toast.error("Invalid JSON in messages field"); return; }
+    if (!apiKey.startsWith("sk-dzcx")) { toast.error("Invalid API key format — must start with sk-dzcx"); return; }
 
     const finalMessages = systemPrompt
       ? [{ role: "system", content: systemPrompt }, ...parsedMessages]
       : parsedMessages;
 
-    setShowResponse(true);
+    setLoading(true);
     setResponse(null);
+    setResponseTime(null);
+    setStatusCode(null);
 
-    keylessChat.mutate({ data: { model, messages: finalMessages } }, {
-      onSuccess: (data) => {
-        setResponse(data as GatewayResponse);
-        queryClient.invalidateQueries({ queryKey: getGetStatsQueryKey() });
-      },
-      onError: () => {
-        toast.error("Request failed");
-        setResponse({ success: false, statusCode: 0, responseTime: 0, responseBody: null, error: "Connection failed" });
-      },
-    });
+    const start = Date.now();
+    try {
+      const res = await fetch(`${BASE}/v1/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          messages: finalMessages,
+          temperature: parseFloat(temperature) || 0.7,
+        }),
+      });
+      const elapsed = Date.now() - start;
+      setResponseTime(elapsed);
+      setStatusCode(res.status);
+      const data = await res.json();
+      setResponse(data);
+      if (!res.ok) {
+        const err = (data as { error?: { message?: string } }).error?.message;
+        toast.error(err ?? "Request failed");
+      }
+    } catch (err) {
+      setResponseTime(Date.now() - start);
+      setStatusCode(0);
+      setResponse({ error: { message: "Connection error", type: "connection_error" } });
+      toast.error("Connection error");
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleClear = () => {
-    setMessages(JSON.stringify([{ role: "user", content: "Hello! What is 2 + 2?" }], null, 2));
-    setSystemPrompt("");
-    setResponse(null);
-    setShowResponse(false);
-  };
+  const endpoint = `${window.location.protocol}//${window.location.host}${BASE}/v1/chat/completions`;
+  const curlStr = `curl -X POST '${endpoint}' \\
+  -H 'Content-Type: application/json' \\
+  -H 'Authorization: Bearer ${apiKey || "<YOUR_API_KEY>"}' \\
+  -d '${JSON.stringify({
+    model,
+    messages: [{ role: "user", content: "Hello!" }],
+    temperature: parseFloat(temperature) || 0.7,
+  }, null, 2).replace(/\n/g, "\n  ")}'`;
 
-  const curlStr = `curl -X 'POST' \\\n  'https://YOUR_GATEWAY/api/gateway/chat' \\\n  -H 'Content-Type: application/json' \\\n  -d '${JSON.stringify({ model, messages: JSON.parse(messages.trim() || "[]").slice(0, 1) })}'`;
+  const statusCls = statusCode === null ? "" : statusCode >= 200 && statusCode < 300 ? "status-2xx" : "status-4xx";
 
-  return (
-    <div className="rounded-md border border-border bg-card shadow-sm overflow-hidden endpoint-block-post" data-testid="endpoint-block-keyless">
-      <button
-        className="w-full flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-3 hover:bg-muted/40 transition-colors text-left"
-        onClick={() => setOpen(p => !p)}
-        data-testid="btn-expand-keyless"
-      >
-        <MethodBadge method="POST" />
-        <span className="font-mono text-xs sm:text-sm font-medium text-foreground flex-1">/chat/completions</span>
-        <div className="hidden sm:flex items-center gap-1.5">
-          <span className="text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded font-medium">No token required</span>
-          <span className="text-xs text-muted-foreground">Chat Completions</span>
-        </div>
-        {open ? <ChevronUp className="w-4 h-4 text-muted-foreground shrink-0" /> : <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />}
-      </button>
-
-      {open && (
-        <div className="border-t border-border bg-background/50">
-          <div className="px-4 py-3 text-sm text-muted-foreground border-b border-border/60 flex items-start gap-2">
-            <Zap className="w-4 h-4 text-green-600 shrink-0 mt-0.5" />
-            <span>
-              Keyless — tidak butuh login atau API key. Menggunakan <span className="font-mono text-xs bg-muted px-1 py-0.5 rounded">bx-umidtoken</span> dari Alibaba CDN secara otomatis.
-              Model yang tersedia: <span className="font-mono text-xs">qwen3-235b-a22b</span>, <span className="font-mono text-xs">qwen3.7-max</span>, <span className="font-mono text-xs">qwen3-30b-a3b</span>.
-            </span>
-          </div>
-
-          <div className="px-3 sm:px-5 pt-4 pb-2">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-semibold text-foreground">Parameters</h3>
-              <button onClick={handleClear} data-testid="btn-cancel-keyless" className="text-xs px-3 py-1 border border-destructive/60 text-destructive rounded hover:bg-destructive/5 transition-colors">Cancel</button>
-            </div>
-
-            <div className="border border-border rounded-md overflow-hidden">
-              <div className="hidden sm:grid sm:grid-cols-[200px_1fr] bg-muted text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                <div className="px-4 py-2 border-r border-border">Name</div>
-                <div className="px-4 py-2">Description</div>
-              </div>
-
-              {/* model */}
-              <div className="border-t border-border bg-white flex flex-col sm:grid sm:grid-cols-[200px_1fr]">
-                <div className="px-3 sm:px-4 py-2 sm:py-3 sm:border-r sm:border-border border-b border-border/40 sm:border-b-0 bg-muted/30 sm:bg-white">
-                  <div className="font-mono text-sm font-semibold">model</div>
-                  <div className="text-[11px] text-destructive font-semibold mt-0.5">* required</div>
-                  <div className="text-[11px] text-muted-foreground mt-0.5">string (body)</div>
-                </div>
-                <div className="px-3 sm:px-4 py-2 sm:py-3 flex flex-col gap-1.5">
-                  <div className="text-xs sm:text-sm text-muted-foreground">Qwen model to use (only models listed below work without a token)</div>
-                  <select
-                    data-testid="input-model"
-                    value={model}
-                    onChange={e => setModel(e.target.value)}
-                    className="w-full border border-border rounded px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary transition-colors"
-                  >
-                    {WORKING_MODELS.map(m => (
-                      <option key={m.id} value={m.id}>{m.label}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* system prompt (optional) */}
-              <div className="border-t border-border bg-muted/20 flex flex-col sm:grid sm:grid-cols-[200px_1fr]">
-                <div className="px-3 sm:px-4 py-2 sm:py-3 sm:border-r sm:border-border border-b border-border/40 sm:border-b-0 bg-muted/30 sm:bg-muted/20">
-                  <div className="font-mono text-sm font-semibold">system</div>
-                  <div className="text-[11px] text-muted-foreground mt-0.5">string (body)</div>
-                  <div className="text-[11px] text-muted-foreground">(optional)</div>
-                </div>
-                <div className="px-3 sm:px-4 py-2 sm:py-3 flex flex-col gap-1.5">
-                  <div className="text-xs sm:text-sm text-muted-foreground">System prompt — instructs the AI's behavior/role (injected before messages)</div>
-                  <input
-                    data-testid="input-system"
-                    type="text"
-                    value={systemPrompt}
-                    onChange={e => setSystemPrompt(e.target.value)}
-                    placeholder="You are a helpful assistant."
-                    className="w-full border border-border rounded px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary transition-colors"
-                  />
-                </div>
-              </div>
-
-              {/* messages */}
-              <div className="border-t border-border bg-white flex flex-col sm:grid sm:grid-cols-[200px_1fr]">
-                <div className="px-3 sm:px-4 py-2 sm:py-3 sm:border-r sm:border-border border-b border-border/40 sm:border-b-0 bg-muted/30 sm:bg-white">
-                  <div className="font-mono text-sm font-semibold">messages</div>
-                  <div className="text-[11px] text-destructive font-semibold mt-0.5">* required</div>
-                  <div className="text-[11px] text-muted-foreground mt-0.5">array (body)</div>
-                </div>
-                <div className="px-3 sm:px-4 py-2 sm:py-3 flex flex-col gap-1.5">
-                  <div className="text-xs sm:text-sm text-muted-foreground">Conversation history — array of <span className="font-mono text-xs bg-muted px-1 rounded">{"{ role, content }"}</span> objects. Roles: <span className="font-mono text-xs">user</span>, <span className="font-mono text-xs">assistant</span></div>
-                  <textarea
-                    data-testid="input-messages"
-                    value={messages}
-                    onChange={e => setMessages(e.target.value)}
-                    rows={5}
-                    className="w-full border border-border rounded px-3 py-2 text-sm font-mono bg-background resize-y focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary transition-colors"
-                    spellCheck={false}
-                  />
-                  <div className="flex gap-2 flex-wrap">
-                    <button
-                      onClick={() => {
-                        try {
-                          const msgs = JSON.parse(messages);
-                          msgs.push({ role: "user", content: "" });
-                          setMessages(JSON.stringify(msgs, null, 2));
-                        } catch { toast.error("Fix JSON first"); }
-                      }}
-                      className="text-xs px-2 py-1 border border-border rounded hover:bg-muted transition-colors"
-                    >+ Add user message</button>
-                    <button
-                      onClick={() => {
-                        try {
-                          const msgs = JSON.parse(messages);
-                          msgs.push({ role: "assistant", content: "" });
-                          setMessages(JSON.stringify(msgs, null, 2));
-                        } catch { toast.error("Fix JSON first"); }
-                      }}
-                      className="text-xs px-2 py-1 border border-border rounded hover:bg-muted transition-colors"
-                    >+ Add assistant message</button>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex gap-3 mt-4 pb-4">
-              <button
-                onClick={handleExecute}
-                disabled={keylessChat.isPending}
-                data-testid="btn-execute-keyless"
-                className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-2.5 bg-primary text-white text-sm font-semibold rounded hover:bg-primary/90 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
-              >
-                {keylessChat.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
-                Execute
-              </button>
-              <button onClick={handleClear} data-testid="btn-clear-keyless" className="flex-1 sm:flex-none px-6 py-2.5 border border-border text-sm font-semibold rounded hover:bg-muted transition-colors">Clear</button>
-            </div>
-          </div>
-
-          {showResponse && (
-            <ResponseSection
-              res={response}
-              isPending={keylessChat.isPending}
-              endpoint="chat/completions"
-              curlStr={curlStr}
-            />
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── Raw Proxy Block ────────────────────────────────────────────────────────
-
-function RawProxyBlock() {
-  const [open, setOpen] = useState(false);
-  const [endpoint, setEndpoint] = useState("chat/completions");
-  const [method, setMethod] = useState("POST");
-  const [token, setToken] = useState(() => localStorage.getItem("qwen_token") || "");
-  const [payload, setPayload] = useState(JSON.stringify({
-    model: "qwen-plus",
-    messages: [{ role: "user", content: "Hello" }],
-    stream: false,
-  }, null, 2));
-  const [response, setResponse] = useState<GatewayResponse | null>(null);
-  const [showResponse, setShowResponse] = useState(false);
-
-  const proxyRequest = useProxyRequest();
-  const queryClient = useQueryClient();
-
-  const handleExecute = () => {
-    let parsedPayload: unknown;
-    try { parsedPayload = JSON.parse(payload); } catch { toast.error("Invalid JSON payload"); return; }
-
-    if (token) localStorage.setItem("qwen_token", token);
-
-    setShowResponse(true);
-    setResponse(null);
-
-    proxyRequest.mutate({ data: { token: token || undefined, endpoint, method, payload: parsedPayload } }, {
-      onSuccess: (data) => {
-        setResponse(data as GatewayResponse);
-        queryClient.invalidateQueries({ queryKey: getGetStatsQueryKey() });
-      },
-      onError: () => {
-        toast.error("Request failed");
-        setResponse({ success: false, statusCode: 0, responseTime: 0, responseBody: null, error: "Connection failed" });
-      },
-    });
-  };
-
-  const handleClear = () => { setResponse(null); setShowResponse(false); };
-
-  const curlStr = `curl -X '${method}' \\\n  'https://chat.qwen.ai/api/v2/${endpoint}' \\\n  -H 'accept: application/json'${token ? ` \\\n  -H 'Authorization: Bearer <YOUR_TOKEN>'` : ""} \\\n  -H 'Content-Type: application/json' \\\n  -d '${payload.replace(/\n/g, "")}'`;
-
-  return (
-    <div className="rounded-md border border-border bg-card shadow-sm overflow-hidden endpoint-block-get" data-testid="endpoint-block-proxy">
-      <button
-        className="w-full flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-3 hover:bg-muted/40 transition-colors text-left"
-        onClick={() => setOpen(p => !p)}
-        data-testid="btn-expand-proxy"
-      >
-        <span className="method-badge-put">ANY</span>
-        <span className="font-mono text-xs sm:text-sm font-medium text-foreground flex-1">/{endpoint || "custom"}</span>
-        <span className="hidden sm:block text-xs text-muted-foreground">Raw Proxy (advanced)</span>
-        {open ? <ChevronUp className="w-4 h-4 text-muted-foreground shrink-0" /> : <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />}
-      </button>
-
-      {open && (
-        <div className="border-t border-border bg-background/50">
-          <div className="px-4 py-3 text-sm text-muted-foreground border-b border-border/60">
-            Forward any raw request to <span className="font-mono text-xs bg-muted px-1 rounded">chat.qwen.ai/api/v2</span>. Token opsional — jika dikosongkan akan menggunakan keyless headers otomatis.
-          </div>
-
-          <div className="px-3 sm:px-5 pt-4 pb-2">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-semibold text-foreground">Parameters</h3>
-              <button onClick={handleClear} className="text-xs px-3 py-1 border border-destructive/60 text-destructive rounded hover:bg-destructive/5 transition-colors">Cancel</button>
-            </div>
-
-            <div className="border border-border rounded-md overflow-hidden">
-              <div className="hidden sm:grid sm:grid-cols-[200px_1fr] bg-muted text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                <div className="px-4 py-2 border-r border-border">Name</div>
-                <div className="px-4 py-2">Description</div>
-              </div>
-
-              {[
-                { name: "token", label: "token", type: "password", value: token, onChange: setToken, desc: "Bearer token (optional — leave blank to use keyless mode)", placeholder: "Paste your session token, or leave blank" },
-              ].map(f => (
-                <div key={f.name} className="border-t border-border bg-white flex flex-col sm:grid sm:grid-cols-[200px_1fr]">
-                  <div className="px-3 sm:px-4 py-2 sm:py-3 sm:border-r sm:border-border border-b border-border/40 sm:border-b-0 bg-muted/30 sm:bg-white">
-                    <div className="font-mono text-sm font-semibold">{f.label}</div>
-                    <div className="text-[11px] text-muted-foreground mt-0.5">string (header)</div>
-                    <div className="text-[11px] text-muted-foreground">(optional)</div>
-                  </div>
-                  <div className="px-3 sm:px-4 py-2 sm:py-3 flex flex-col gap-1.5">
-                    <div className="text-xs sm:text-sm text-muted-foreground">{f.desc}</div>
-                    <input
-                      data-testid={`input-proxy-${f.name}`}
-                      type={f.type}
-                      value={f.value}
-                      onChange={e => f.onChange(e.target.value)}
-                      placeholder={f.placeholder}
-                      className="w-full border border-border rounded px-3 py-2 text-sm font-mono bg-background focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary transition-colors"
-                    />
-                  </div>
-                </div>
-              ))}
-
-              <div className="border-t border-border bg-muted/20 flex flex-col sm:grid sm:grid-cols-[200px_1fr]">
-                <div className="px-3 sm:px-4 py-2 sm:py-3 sm:border-r sm:border-border border-b border-border/40 sm:border-b-0 bg-muted/30 sm:bg-muted/20">
-                  <div className="font-mono text-sm font-semibold">method</div>
-                  <div className="text-[11px] text-destructive font-semibold mt-0.5">* required</div>
-                  <div className="text-[11px] text-muted-foreground mt-0.5">string (meta)</div>
-                </div>
-                <div className="px-3 sm:px-4 py-2 sm:py-3 flex flex-col gap-1.5">
-                  <div className="text-xs sm:text-sm text-muted-foreground">HTTP method</div>
-                  <select value={method} onChange={e => setMethod(e.target.value)} data-testid="input-proxy-method" className="w-full border border-border rounded px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/40 transition-colors">
-                    <option value="POST">POST</option>
-                    <option value="GET">GET</option>
-                    <option value="PUT">PUT</option>
-                    <option value="DELETE">DELETE</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="border-t border-border bg-white flex flex-col sm:grid sm:grid-cols-[200px_1fr]">
-                <div className="px-3 sm:px-4 py-2 sm:py-3 sm:border-r sm:border-border border-b border-border/40 sm:border-b-0 bg-muted/30 sm:bg-white">
-                  <div className="font-mono text-sm font-semibold">endpoint</div>
-                  <div className="text-[11px] text-destructive font-semibold mt-0.5">* required</div>
-                  <div className="text-[11px] text-muted-foreground mt-0.5">string (path)</div>
-                </div>
-                <div className="px-3 sm:px-4 py-2 sm:py-3 flex flex-col gap-1.5">
-                  <div className="text-xs sm:text-sm text-muted-foreground">Path relative to <span className="font-mono text-xs">chat.qwen.ai/api/v2/</span></div>
-                  <input value={endpoint} onChange={e => setEndpoint(e.target.value)} placeholder="chat/completions" data-testid="input-proxy-endpoint" className="w-full border border-border rounded px-3 py-2 text-sm font-mono bg-background focus:outline-none focus:ring-2 focus:ring-primary/40 transition-colors" />
-                </div>
-              </div>
-
-              <div className="border-t border-border bg-muted/20 flex flex-col sm:grid sm:grid-cols-[200px_1fr]">
-                <div className="px-3 sm:px-4 py-2 sm:py-3 sm:border-r sm:border-border border-b border-border/40 sm:border-b-0 bg-muted/30 sm:bg-muted/20">
-                  <div className="font-mono text-sm font-semibold">body</div>
-                  <div className="text-[11px] text-muted-foreground mt-0.5">object (body)</div>
-                  <div className="text-[11px] text-muted-foreground">(optional)</div>
-                </div>
-                <div className="px-3 sm:px-4 py-2 sm:py-3 flex flex-col gap-1.5">
-                  <div className="text-xs sm:text-sm text-muted-foreground">Raw JSON request body</div>
-                  <textarea value={payload} onChange={e => setPayload(e.target.value)} rows={6} data-testid="input-proxy-body" className="w-full border border-border rounded px-3 py-2 text-sm font-mono bg-background resize-y focus:outline-none focus:ring-2 focus:ring-primary/40 transition-colors" spellCheck={false} />
-                </div>
-              </div>
-            </div>
-
-            <div className="flex gap-3 mt-4 pb-4">
-              <button onClick={handleExecute} disabled={proxyRequest.isPending} data-testid="btn-execute-proxy" className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-2.5 bg-primary text-white text-sm font-semibold rounded hover:bg-primary/90 disabled:opacity-60 transition-colors">
-                {proxyRequest.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-                Execute
-              </button>
-              <button onClick={handleClear} data-testid="btn-clear-proxy" className="flex-1 sm:flex-none px-6 py-2.5 border border-border text-sm font-semibold rounded hover:bg-muted transition-colors">Clear</button>
-            </div>
-          </div>
-
-          {showResponse && (
-            <ResponseSection res={response} isPending={proxyRequest.isPending} endpoint={endpoint} curlStr={curlStr} />
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── Main page ───────────────────────────────────────────────────────────────
-
-export default function Playground() {
-  const { data: stats } = useGetStats({}, { query: { queryKey: getGetStatsQueryKey() } });
+  // Extract content from response for easy reading
+  const assistantContent = response && typeof response === "object"
+    ? ((response as { choices?: Array<{ message?: { content?: string } }> }).choices?.[0]?.message?.content ?? null)
+    : null;
 
   return (
     <div className="flex-1 flex flex-col overflow-auto">
+      {/* Header */}
       <div className="bg-card border-b border-border px-4 sm:px-6 py-4">
-        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-          <div className="min-w-0">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+          <div>
             <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-lg sm:text-xl font-bold text-foreground">Qwen Chat API</h1>
-              <span className="text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded font-semibold shrink-0">Keyless</span>
+              <h1 className="text-lg font-bold text-foreground">API Playground</h1>
+              <span className="text-xs px-2 py-0.5 bg-primary/10 text-primary rounded font-medium">OpenAI-compatible</span>
             </div>
-            <div className="flex items-center gap-2 mt-1 flex-wrap">
-              <span className="text-xs px-2 py-0.5 bg-primary text-white rounded font-medium shrink-0">v2</span>
-              <span className="text-xs sm:text-sm text-muted-foreground font-mono truncate">https://chat.qwen.ai/api/v2</span>
-            </div>
-            <p className="text-xs sm:text-sm text-muted-foreground mt-1 hidden sm:block">
-              API gateway wrapper — tidak butuh token atau login. Gunakan langsung.
-            </p>
+            <p className="text-xs text-muted-foreground mt-0.5 font-mono">{endpoint}</p>
           </div>
-          {stats && (
-            <div className="flex gap-4 text-center shrink-0">
-              <div><div className="font-semibold text-sm sm:text-base">{stats.totalRequests}</div><div className="text-[11px] text-muted-foreground">Requests</div></div>
-              <div><div className="font-semibold text-sm sm:text-base text-green-600">{stats.totalRequests ? Math.round((stats.successCount / stats.totalRequests) * 100) : 0}%</div><div className="text-[11px] text-muted-foreground">Success</div></div>
-              <div><div className="font-semibold text-sm sm:text-base">{stats.avgResponseTime}ms</div><div className="text-[11px] text-muted-foreground">Avg latency</div></div>
-            </div>
-          )}
+          <div className="text-xs text-muted-foreground">Signed in as <span className="font-medium text-foreground">{user?.name}</span></div>
         </div>
       </div>
 
       <div className="flex-1 p-3 sm:p-6 max-w-5xl mx-auto w-full space-y-4">
-        <KeylessChatBlock />
-        <RawProxyBlock />
+
+        {/* Endpoint block */}
+        <div className="rounded-xl border border-border bg-card shadow-sm overflow-hidden">
+          <button
+            className="w-full flex items-center gap-3 px-4 py-3 hover:bg-muted/40 transition-colors text-left"
+            onClick={() => setShowEndpoint(p => !p)}
+          >
+            <span className="method-badge-post">POST</span>
+            <span className="font-mono text-sm font-medium text-foreground flex-1">/v1/chat/completions</span>
+            <span className="hidden sm:block text-xs text-muted-foreground">Chat Completions</span>
+            {showEndpoint ? <ChevronUp className="w-4 h-4 text-muted-foreground shrink-0" /> : <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />}
+          </button>
+
+          {showEndpoint && (
+            <div className="border-t border-border">
+              {/* API Key warning */}
+              {userKeys.length === 0 && (
+                <div className="px-4 py-3 bg-amber-50 border-b border-amber-200 flex items-center gap-2 text-sm text-amber-800">
+                  <Key className="w-4 h-4 shrink-0" />
+                  <span>No API keys found. </span>
+                  <Link href="/dashboard" className="font-semibold underline">Create one in Dashboard →</Link>
+                </div>
+              )}
+
+              <div className="px-3 sm:px-5 pt-4 pb-6 space-y-5">
+                {/* Authorization */}
+                <div>
+                  <div className="flex items-center gap-2 mb-3">
+                    <h3 className="text-sm font-semibold text-foreground">Authorization</h3>
+                    <span className="text-xs px-1.5 py-0.5 bg-red-50 text-red-600 rounded font-semibold border border-red-200">required</span>
+                  </div>
+                  <div className="border border-border rounded-lg overflow-hidden">
+                    <div className="bg-muted/60 flex flex-col sm:grid sm:grid-cols-[160px_1fr]">
+                      <div className="px-4 py-3 sm:border-r sm:border-border border-b border-border/50 sm:border-b-0 bg-muted/30">
+                        <div className="font-mono text-sm font-semibold">Authorization</div>
+                        <div className="text-[11px] text-muted-foreground mt-0.5">Bearer token (header)</div>
+                      </div>
+                      <div className="px-4 py-3 space-y-2">
+                        <div className="text-xs text-muted-foreground">Your API key from the Dashboard (starts with <code className="bg-muted px-1 rounded">sk-dzcx</code>)</div>
+                        <input
+                          type="password"
+                          value={apiKey}
+                          onChange={e => setApiKey(e.target.value)}
+                          placeholder="sk-dzcxXXXXXXXXXXXXXXXXXXXX"
+                          className="w-full border border-border rounded-lg px-3 py-2 text-sm font-mono bg-background focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary transition-colors"
+                        />
+                        {userKeys.length > 0 && (
+                          <div className="text-[11px] text-muted-foreground">
+                            Your keys: {userKeys.map(k => (
+                              <span key={k.id} className="font-mono">{maskKey(k.prefix, k.suffix)}</span>
+                            )).reduce((a, b) => <>{a}, {b}</>)}
+                            {" "}— copy the full key from <Link href="/dashboard" className="text-primary underline">Dashboard</Link>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Request body */}
+                <div>
+                  <h3 className="text-sm font-semibold text-foreground mb-3">Request body</h3>
+                  <div className="border border-border rounded-lg overflow-hidden divide-y divide-border">
+                    {/* model */}
+                    <div className="flex flex-col sm:grid sm:grid-cols-[160px_1fr] bg-white">
+                      <div className="px-4 py-3 sm:border-r border-border border-b sm:border-b-0 bg-muted/20">
+                        <div className="font-mono text-sm font-semibold">model</div>
+                        <div className="text-[11px] text-red-600 font-semibold">* required</div>
+                        <div className="text-[11px] text-muted-foreground">string</div>
+                      </div>
+                      <div className="px-4 py-3 space-y-1.5">
+                        <div className="text-xs text-muted-foreground">Model ID to use for completion</div>
+                        <select
+                          value={model}
+                          onChange={e => setModel(e.target.value)}
+                          className="w-full border border-border rounded-lg px-3 py-2 text-sm font-mono bg-background focus:outline-none focus:ring-2 focus:ring-primary/40 transition-colors"
+                        >
+                          {WORKING_MODELS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* system */}
+                    <div className="flex flex-col sm:grid sm:grid-cols-[160px_1fr] bg-muted/10">
+                      <div className="px-4 py-3 sm:border-r border-border border-b sm:border-b-0 bg-muted/20">
+                        <div className="font-mono text-sm font-semibold">system</div>
+                        <div className="text-[11px] text-muted-foreground">string (optional)</div>
+                      </div>
+                      <div className="px-4 py-3 space-y-1.5">
+                        <div className="text-xs text-muted-foreground">System prompt — injected as first message with role "system"</div>
+                        <input
+                          type="text"
+                          value={systemPrompt}
+                          onChange={e => setSystemPrompt(e.target.value)}
+                          placeholder="You are a helpful assistant."
+                          className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/40 transition-colors"
+                        />
+                      </div>
+                    </div>
+
+                    {/* messages */}
+                    <div className="flex flex-col sm:grid sm:grid-cols-[160px_1fr] bg-white">
+                      <div className="px-4 py-3 sm:border-r border-border border-b sm:border-b-0 bg-muted/20">
+                        <div className="font-mono text-sm font-semibold">messages</div>
+                        <div className="text-[11px] text-red-600 font-semibold">* required</div>
+                        <div className="text-[11px] text-muted-foreground">array[object]</div>
+                      </div>
+                      <div className="px-4 py-3 space-y-2">
+                        <div className="text-xs text-muted-foreground">
+                          Array of <code className="bg-muted px-1 rounded text-[11px]">{"{ role, content }"}</code> — roles: <code className="bg-muted px-1 rounded text-[11px]">user</code>, <code className="bg-muted px-1 rounded text-[11px]">assistant</code>, <code className="bg-muted px-1 rounded text-[11px]">system</code>
+                        </div>
+                        <textarea
+                          value={messages}
+                          onChange={e => setMessages(e.target.value)}
+                          rows={5}
+                          spellCheck={false}
+                          className={`w-full border rounded-lg px-3 py-2 text-sm font-mono bg-background resize-y focus:outline-none focus:ring-2 focus:ring-primary/40 transition-colors ${isValidJson ? "border-border focus:border-primary" : "border-red-400 focus:ring-red-200"}`}
+                        />
+                        {!isValidJson && <div className="text-xs text-red-600">Invalid JSON</div>}
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => { try { const m = JSON.parse(messages); m.push({ role: "user", content: "" }); setMessages(JSON.stringify(m, null, 2)); } catch { toast.error("Fix JSON first"); } }}
+                            className="text-xs px-2 py-1 border border-border rounded hover:bg-muted transition-colors"
+                          >+ user</button>
+                          <button
+                            onClick={() => { try { const m = JSON.parse(messages); m.push({ role: "assistant", content: "" }); setMessages(JSON.stringify(m, null, 2)); } catch { toast.error("Fix JSON first"); } }}
+                            className="text-xs px-2 py-1 border border-border rounded hover:bg-muted transition-colors"
+                          >+ assistant</button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* temperature */}
+                    <div className="flex flex-col sm:grid sm:grid-cols-[160px_1fr] bg-muted/10">
+                      <div className="px-4 py-3 sm:border-r border-border border-b sm:border-b-0 bg-muted/20">
+                        <div className="font-mono text-sm font-semibold">temperature</div>
+                        <div className="text-[11px] text-muted-foreground">number (optional)</div>
+                      </div>
+                      <div className="px-4 py-3 space-y-1.5">
+                        <div className="text-xs text-muted-foreground">Sampling temperature 0–2. Default 0.7</div>
+                        <input
+                          type="number"
+                          min="0" max="2" step="0.1"
+                          value={temperature}
+                          onChange={e => setTemperature(e.target.value)}
+                          className="w-32 border border-border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/40 transition-colors"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Execute buttons */}
+                <div className="flex gap-3">
+                  <button
+                    onClick={handleExecute}
+                    disabled={loading || !isValidJson}
+                    className="flex items-center gap-2 px-6 py-2.5 bg-primary text-white text-sm font-semibold rounded-lg hover:bg-primary/90 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+                    Execute
+                  </button>
+                  <button
+                    onClick={() => { setResponse(null); setResponseTime(null); setStatusCode(null); }}
+                    className="px-6 py-2.5 border border-border text-sm font-semibold rounded-lg hover:bg-muted transition-colors"
+                  >
+                    Clear
+                  </button>
+                </div>
+
+                {/* Response section */}
+                {(response !== null || loading) && (
+                  <div className="space-y-4 pt-2 border-t border-border">
+                    <h3 className="text-sm font-semibold text-foreground">Responses</h3>
+
+                    {/* curl */}
+                    <div>
+                      <div className="text-xs text-muted-foreground mb-1.5 font-medium uppercase tracking-wider">Curl</div>
+                      <CodeBlock content={curlStr} />
+                    </div>
+
+                    {/* Request URL */}
+                    <div>
+                      <div className="text-xs text-muted-foreground mb-1.5 font-medium uppercase tracking-wider">Request URL</div>
+                      <div className="bg-gray-950 text-gray-100 rounded-lg px-4 py-2.5 text-xs font-mono break-all">{endpoint}</div>
+                    </div>
+
+                    {/* Server response */}
+                    <div>
+                      <div className="text-xs text-muted-foreground mb-1.5 font-medium uppercase tracking-wider">Server response</div>
+                      {loading ? (
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground py-4">
+                          <Loader2 className="w-4 h-4 animate-spin" /> Awaiting response...
+                        </div>
+                      ) : (
+                        <div className="border border-border rounded-lg overflow-hidden">
+                          <div className="hidden sm:grid sm:grid-cols-[80px_1fr] bg-muted text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                            <div className="px-4 py-2 border-r border-border">Code</div>
+                            <div className="px-4 py-2">Details</div>
+                          </div>
+                          <div className="sm:grid sm:grid-cols-[80px_1fr] border-t border-border bg-white">
+                            <div className="px-4 py-3 sm:border-r sm:border-border flex items-center gap-2 border-b border-border sm:border-b-0">
+                              <span className={statusCls}>{statusCode ?? "—"}</span>
+                            </div>
+                            <div className="px-4 py-3 space-y-3">
+                              {/* Assistant answer — easy to read */}
+                              {assistantContent && (
+                                <div className="bg-green-50 border border-green-200 rounded-lg px-3 py-2.5">
+                                  <div className="text-[11px] font-semibold text-green-800 uppercase tracking-wider mb-1">Assistant reply</div>
+                                  <div className="text-sm text-green-900 whitespace-pre-wrap">{assistantContent}</div>
+                                </div>
+                              )}
+                              <div className="flex items-center justify-between">
+                                <div className="text-xs text-muted-foreground font-medium">Full response body {responseTime !== null && <span className="ml-2 text-primary">{responseTime}ms</span>}</div>
+                                <button
+                                  onClick={() => { navigator.clipboard.writeText(JSON.stringify(response, null, 2)); toast.success("Copied"); }}
+                                  className="text-xs px-2 py-0.5 border border-border rounded hover:bg-muted transition-colors"
+                                >Copy</button>
+                              </div>
+                              <div className="code-block overflow-x-auto" dangerouslySetInnerHTML={{ __html: syntaxHighlight(JSON.stringify(response, null, 2)) }} />
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Models reference */}
+        <div className="rounded-xl border border-border bg-card shadow-sm overflow-hidden">
+          <button
+            className="w-full flex items-center gap-3 px-4 py-3 hover:bg-muted/40 transition-colors text-left"
+            onClick={() => {}}
+          >
+            <span className="method-badge-get">GET</span>
+            <span className="font-mono text-sm font-medium text-foreground flex-1">/v1/models</span>
+            <span className="text-xs text-muted-foreground">List Models</span>
+          </button>
+          <div className="border-t border-border px-4 py-4 bg-background/40">
+            <div className="text-xs text-muted-foreground mb-3">Available models (all free, no token needed):</div>
+            <div className="space-y-2">
+              {WORKING_MODELS.map(m => (
+                <div key={m.id} className="flex items-center gap-3 py-2 px-3 border border-border rounded-lg bg-white">
+                  <div className="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0" />
+                  <code className="text-sm font-mono text-foreground">{m.id}</code>
+                  <span className="text-xs text-green-600 font-medium ml-auto">Active</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
       </div>
     </div>
   );
