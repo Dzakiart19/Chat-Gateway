@@ -1,4 +1,4 @@
-modules = ["nodejs-24"]
+modules = ["nodejs-20", "web", "bash"]
 
 [deployment]
 router = "application"
@@ -41,3 +41,6 @@ MONGODB_URI = "mongodb+srv://galerizaki_db_user:wTkfzrqewY5qCxYG@cluster0.vmiek8
 REDIS_PASSWORD = "dA82OZIdJg62zWqsPJ9sDNvgtpCKbAAs"
 POSTGRES_URL = "postgresql://neondb_owner:npg_WXBcMVP19yEg@ep-dark-haze-a4snvlq6-pooler.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
 JWT_SECRET = "qwen-gateway-jwt-secret-2026-secure-xK9mP2nQ"
+
+[nix]
+channel = "stable-25_05"
