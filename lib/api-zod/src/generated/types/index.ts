@@ -15,6 +15,7 @@ export * from './healthStatus';
 export * from './historyEntry';
 export * from './historyEntryRequestPayload';
 export * from './historyEntryResponseBody';
+export * from './keylessChatInput';
 export * from './proxyRequestInput';
 export * from './proxyRequestInputExtraHeaders';
 export * from './proxyRequestInputPayload';

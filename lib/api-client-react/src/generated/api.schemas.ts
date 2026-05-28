@@ -36,6 +36,17 @@ export interface ChatMessage {
   tool_call_id?: string | null;
 }
 
+export interface KeylessChatInput {
+  /** Qwen model ID (e.g. qwen3-235b-a22b, qwen3.7-max, qwen3-30b-a3b) */
+  model: string;
+  /** Array of messages (OpenAI-compatible format) */
+  messages?: ChatMessage[];
+  /** Raw prompt string (alternative to messages) */
+  prompt?: string;
+  /** Whether to stream (currently always returns full response) */
+  stream?: boolean;
+}
+
 /**
  * The request body to forward
  */
@@ -47,7 +58,7 @@ export type ProxyRequestInputPayload = { [key: string]: unknown };
 export type ProxyRequestInputExtraHeaders = { [key: string]: unknown };
 
 export interface ProxyRequestInput {
-  /** Bearer token for Qwen API authentication */
+  /** Bearer token (optional - falls back to keyless if omitted) */
   token: string;
   /** The endpoint path to proxy to (e.g. chat/completions) */
   endpoint: string;

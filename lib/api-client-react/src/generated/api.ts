@@ -25,6 +25,7 @@ import type {
   GetHistoryParams,
   HealthStatus,
   HistoryEntry,
+  KeylessChatInput,
   ProxyRequestInput,
   ProxyResponse
 } from './api.schemas';
@@ -119,6 +120,78 @@ export function useHealthCheck<TData = Awaited<ReturnType<typeof healthCheck>>, 
 
 
 
+export const getKeylessChatUrl = () => {
+
+
+
+
+  return `/api/gateway/chat`
+}
+
+/**
+ * Sends a chat message to Qwen AI without any API key or login using bx-umidtoken approach
+ * @summary Keyless Qwen chat (no token required)
+ */
+export const keylessChat = async (keylessChatInput: KeylessChatInput, options?: RequestInit): Promise<ProxyResponse> => {
+
+  return customFetch<ProxyResponse>(getKeylessChatUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      keylessChatInput,)
+  }
+);}
+
+
+
+
+export const getKeylessChatMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof keylessChat>>, TError,{data: BodyType<KeylessChatInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof keylessChat>>, TError,{data: BodyType<KeylessChatInput>}, TContext> => {
+
+const mutationKey = ['keylessChat'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof keylessChat>>, {data: BodyType<KeylessChatInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  keylessChat(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type KeylessChatMutationResult = NonNullable<Awaited<ReturnType<typeof keylessChat>>>
+    export type KeylessChatMutationBody = BodyType<KeylessChatInput>
+    export type KeylessChatMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Keyless Qwen chat (no token required)
+ */
+export const useKeylessChat = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof keylessChat>>, TError,{data: BodyType<KeylessChatInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof keylessChat>>,
+        TError,
+        {data: BodyType<KeylessChatInput>},
+        TContext
+      > => {
+      return useMutation(getKeylessChatMutationOptions(options));
+    }
+
 export const getProxyRequestUrl = () => {
 
 
@@ -128,8 +201,8 @@ export const getProxyRequestUrl = () => {
 }
 
 /**
- * Forwards the request to chat.qwen.ai/api/v2 and returns the response
- * @summary Proxy a request to the Qwen API
+ * Forwards the request to chat.qwen.ai/api/v2 and returns the response. Token optional - falls back to keyless if not provided.
+ * @summary Raw proxy to Qwen API (token optional)
  */
 export const proxyRequest = async (proxyRequestInput: ProxyRequestInput, options?: RequestInit): Promise<ProxyResponse> => {
 
@@ -178,7 +251,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type ProxyRequestMutationError = ErrorType<unknown>
 
     /**
- * @summary Proxy a request to the Qwen API
+ * @summary Raw proxy to Qwen API (token optional)
  */
 export const useProxyRequest = <TError = ErrorType<unknown>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof proxyRequest>>, TError,{data: BodyType<ProxyRequestInput>}, TContext>, request?: SecondParameter<typeof customFetch>}

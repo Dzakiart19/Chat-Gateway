@@ -27,12 +27,32 @@ paths:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
 
+  /gateway/chat:
+    post:
+      operationId: keylessChat
+      tags: [gateway]
+      summary: Keyless Qwen chat (no token required)
+      description: Sends a chat message to Qwen AI without any API key or login using bx-umidtoken approach
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KeylessChatInput"
+      responses:
+        "200":
+          description: Chat response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProxyResponse"
+
   /gateway/proxy:
     post:
       operationId: proxyRequest
       tags: [gateway]
-      summary: Proxy a request to the Qwen API
-      description: Forwards the request to chat.qwen.ai/api/v2 and returns the response
+      summary: Raw proxy to Qwen API (token optional)
+      description: Forwards the request to chat.qwen.ai/api/v2 and returns the response. Token optional - falls back to keyless if not provided.
       requestBody:
         required: true
         content:
@@ -140,12 +160,32 @@ components:
       required:
         - role
 
+    KeylessChatInput:
+      type: object
+      properties:
+        model:
+          type: string
+          description: Qwen model ID (e.g. qwen3-235b-a22b, qwen3.7-max, qwen3-30b-a3b)
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChatMessage"
+          description: Array of messages (OpenAI-compatible format)
+        prompt:
+          type: string
+          description: Raw prompt string (alternative to messages)
+        stream:
+          type: boolean
+          description: Whether to stream (currently always returns full response)
+      required:
+        - model
+
     ProxyRequestInput:
       type: object
       properties:
         token:
           type: string
-          description: Bearer token for Qwen API authentication
+          description: Bearer token (optional - falls back to keyless if omitted)
         endpoint:
           type: string
           description: The endpoint path to proxy to (e.g. chat/completions)

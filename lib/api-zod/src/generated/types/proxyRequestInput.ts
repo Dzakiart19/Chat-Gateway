@@ -9,7 +9,7 @@ import type { ProxyRequestInputExtraHeaders } from './proxyRequestInputExtraHead
 import type { ProxyRequestInputPayload } from './proxyRequestInputPayload';
 
 export interface ProxyRequestInput {
-  /** Bearer token for Qwen API authentication */
+  /** Bearer token (optional - falls back to keyless if omitted) */
   token: string;
   /** The endpoint path to proxy to (e.g. chat/completions) */
   endpoint: string;

@@ -18,11 +18,51 @@ export const HealthCheckResponse = zod.object({
 
 
 /**
- * Forwards the request to chat.qwen.ai/api/v2 and returns the response
- * @summary Proxy a request to the Qwen API
+ * Sends a chat message to Qwen AI without any API key or login using bx-umidtoken approach
+ * @summary Keyless Qwen chat (no token required)
+ */
+export const KeylessChatBody = zod.object({
+  "model": zod.string().describe('Qwen model ID (e.g. qwen3-235b-a22b, qwen3.7-max, qwen3-30b-a3b)'),
+  "messages": zod.array(zod.object({
+  "role": zod.string(),
+  "content": zod.string().nullish(),
+  "name": zod.string().nullish(),
+  "tool_calls": zod.array(zod.object({
+
+}).passthrough()).nullish(),
+  "tool_call_id": zod.string().nullish()
+})).optional().describe('Array of messages (OpenAI-compatible format)'),
+  "prompt": zod.string().optional().describe('Raw prompt string (alternative to messages)'),
+  "stream": zod.boolean().optional().describe('Whether to stream (currently always returns full response)')
+})
+
+export const KeylessChatResponse = zod.object({
+  "id": zod.string(),
+  "success": zod.boolean(),
+  "statusCode": zod.number(),
+  "requestedAt": zod.string(),
+  "responseTime": zod.number(),
+  "endpoint": zod.string(),
+  "method": zod.string(),
+  "requestPayload": zod.object({
+
+}).passthrough().optional(),
+  "responseBody": zod.object({
+
+}).passthrough().optional(),
+  "responseHeaders": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.string().nullish()
+})
+
+
+/**
+ * Forwards the request to chat.qwen.ai/api/v2 and returns the response. Token optional - falls back to keyless if not provided.
+ * @summary Raw proxy to Qwen API (token optional)
  */
 export const ProxyRequestBody = zod.object({
-  "token": zod.string().describe('Bearer token for Qwen API authentication'),
+  "token": zod.string().describe('Bearer token (optional - falls back to keyless if omitted)'),
   "endpoint": zod.string().describe('The endpoint path to proxy to (e.g. chat\/completions)'),
   "method": zod.string().describe('HTTP method'),
   "payload": zod.object({
