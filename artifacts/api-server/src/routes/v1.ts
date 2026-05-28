@@ -75,6 +75,111 @@ function parseQwenSSE(body: string): { content: string; inputTokens: number; out
   return { content: answer || fallback, inputTokens, outputTokens };
 }
 
+// ── Tool-calling types ──────────────────────────────────────────────────────
+
+interface ToolFunction {
+  name: string;
+  description?: string;
+  parameters?: Record<string, unknown>;
+}
+interface Tool { type: "function"; function: ToolFunction }
+
+interface DetectedToolCall {
+  id: string;
+  type: "function";
+  function: { name: string; arguments: string };
+}
+
+// Build compact tool definitions block
+function buildToolDefs(tools: Tool[]): string {
+  return tools.map(t => {
+    const f = t.function;
+    const params = f.parameters ? JSON.stringify(f.parameters) : "{}";
+    return `- ${f.name}: ${f.description ?? "(no description)"} | params: ${params}`;
+  }).join("\n");
+}
+
+// Inject tool instructions into messages
+// Strategy: prepend system block + append reminder to LAST user message
+function injectToolPrompt(
+  messages: Array<{ role: string; content?: string | null }>,
+  tools: Tool[],
+  toolChoice: string | { type: string; function?: { name: string } } | undefined,
+): Array<{ role: string; content?: string | null }> {
+  const defs = buildToolDefs(tools);
+
+  // Determine if a specific tool is forced
+  const forcedTool =
+    typeof toolChoice === "object" && toolChoice?.type === "function"
+      ? toolChoice.function?.name
+      : toolChoice === "required"
+        ? tools[0]?.function?.name
+        : null;
+
+  const systemBlock = `You have access to external tools listed below. You do NOT have real-time internet access, so whenever the user asks for live data (weather, prices, time, news, calculations, etc.) you MUST call the appropriate tool instead of saying you cannot.
+
+AVAILABLE TOOLS:
+${defs}
+
+RESPONSE FORMAT — when calling a tool, output ONLY this raw JSON (no markdown, no explanation):
+{"tool_calls":[{"name":"FUNCTION_NAME","arguments":{...}}]}
+
+When NOT calling a tool, respond normally in plain text.`;
+
+  // Build message list with system injected
+  let result: Array<{ role: string; content?: string | null }>;
+  const first = messages[0];
+  if (first?.role === "system") {
+    result = [
+      { role: "system", content: `${first.content ?? ""}\n\n${systemBlock}` },
+      ...messages.slice(1),
+    ];
+  } else {
+    result = [{ role: "system", content: systemBlock }, ...messages];
+  }
+
+  // Append a strong reminder to the last user message
+  const lastIdx = result.length - 1;
+  const last = result[lastIdx];
+  if (last?.role === "user") {
+    const reminder = forcedTool
+      ? `\n\n[SYSTEM: You MUST call the tool "${forcedTool}" to answer this. Output only the JSON tool_calls object.]`
+      : `\n\n[SYSTEM: If this request needs live data or an action you cannot do internally, call the appropriate tool. Output ONLY the JSON object {"tool_calls":[...]} with no other text.]`;
+    result = [
+      ...result.slice(0, lastIdx),
+      { role: "user", content: `${last.content ?? ""}${reminder}` },
+    ];
+  }
+
+  return result;
+}
+
+// Try to extract JSON tool_calls block from raw model response
+function detectToolCalls(raw: string): DetectedToolCall[] | null {
+  // Strip optional code fences
+  const cleaned = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  // Find first { ... } block
+  const start = cleaned.indexOf("{");
+  const end = cleaned.lastIndexOf("}");
+  if (start === -1 || end === -1) return null;
+  try {
+    const parsed = JSON.parse(cleaned.slice(start, end + 1)) as {
+      tool_calls?: Array<{ name: string; arguments: unknown }>;
+    };
+    if (!Array.isArray(parsed.tool_calls) || parsed.tool_calls.length === 0) return null;
+    return parsed.tool_calls.map((tc, i) => ({
+      id: `call_${randomUUID().replace(/-/g, "").slice(0, 20)}_${i}`,
+      type: "function" as const,
+      function: {
+        name: tc.name,
+        arguments: typeof tc.arguments === "string" ? tc.arguments : JSON.stringify(tc.arguments),
+      },
+    }));
+  } catch {
+    return null;
+  }
+}
+
 function messagesToPrompt(messages: Array<{ role: string; content?: string | null }>): string {
   return messages.map(m => {
     const role = m.role === "assistant" ? "Assistant" : m.role === "system" ? "System" : "User";
@@ -82,17 +187,21 @@ function messagesToPrompt(messages: Array<{ role: string; content?: string | nul
   }).join("\n");
 }
 
-// POST /v1/chat/completions (OpenAI-compatible)
+// POST /v1/chat/completions (OpenAI-compatible, with tool calling)
 router.post("/chat/completions", requireApiKey, async (req, res) => {
   const {
     model = "qwen3-235b-a22b",
     messages,
+    tools,
+    tool_choice: _toolChoice,
     temperature: _temp,
     max_tokens: _max,
     stream = false,
   } = req.body as {
     model?: string;
     messages?: Array<{ role: string; content?: string | null }>;
+    tools?: Tool[];
+    tool_choice?: string | { type: string; function?: { name: string } };
     temperature?: number;
     max_tokens?: number;
     stream?: boolean;
@@ -103,6 +212,8 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
     return;
   }
 
+  const hasTools = Array.isArray(tools) && tools.length > 0;
+  const effectiveMessages = hasTools ? injectToolPrompt(messages, tools!, _toolChoice) : messages;
   const id = `chatcmpl-${randomUUID().replace(/-/g, "").slice(0, 29)}`;
 
   try {
@@ -111,7 +222,8 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
     const chatId = await createQwenChat(headers, model);
 
     const msgId = randomUUID();
-    const userPrompt = messagesToPrompt(messages);
+    const userPrompt = messagesToPrompt(effectiveMessages);
+
     const r2 = await fetch(`${QWEN_BASE}/chat/completions?chat_id=${chatId}`, {
       method: "POST",
       headers,
@@ -138,6 +250,36 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
       return;
     }
 
+    // ── Detect tool calls in response ──────────────────────────────────────
+    const toolCalls = hasTools ? detectToolCalls(content) : null;
+
+    if (toolCalls) {
+      res.json({
+        id,
+        object: "chat.completion",
+        created: Math.floor(Date.now() / 1000),
+        model,
+        choices: [{
+          index: 0,
+          message: {
+            role: "assistant",
+            content: null,
+            tool_calls: toolCalls,
+          },
+          logprobs: null,
+          finish_reason: "tool_calls",
+        }],
+        usage: {
+          prompt_tokens: inputTokens,
+          completion_tokens: outputTokens,
+          total_tokens: inputTokens + outputTokens,
+        },
+        system_fingerprint: "fp_qwen_gateway",
+      });
+      return;
+    }
+
+    // ── Normal text response ───────────────────────────────────────────────
     res.json({
       id,
       object: "chat.completion",
