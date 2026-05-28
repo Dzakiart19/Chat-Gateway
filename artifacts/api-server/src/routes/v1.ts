@@ -2,6 +2,7 @@ import { Router } from "express";
 import { randomUUID } from "crypto";
 import { requireApiKey } from "../middleware/requireApiKey";
 import { logger } from "../lib/logger";
+import { recordRequest } from "../lib/stats";
 
 const router = Router();
 
@@ -233,6 +234,9 @@ const MODELS = [
 // ── POST /v1/chat/completions ────────────────────────────────────────────────
 
 router.post("/chat/completions", requireApiKey, async (req, res) => {
+  const reqStart = Date.now();
+  const reqId = `v1-${randomUUID().replace(/-/g, "").slice(0, 20)}`;
+
   const {
     model = "qwen3-235b-a22b",
     messages,
@@ -278,6 +282,24 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
 
   const includeUsage = stream_options?.include_usage === true;
   const jsonMode = response_format?.type === "json_object";
+
+  // Record every request once response is finished (covers all paths incl. streaming)
+  res.on("finish", () => {
+    recordRequest({
+      id: reqId,
+      success: res.statusCode < 400,
+      statusCode: res.statusCode,
+      requestedAt: new Date(reqStart).toISOString(),
+      responseTime: Date.now() - reqStart,
+      endpoint: "v1/chat/completions",
+      method: "POST",
+      model,
+      requestPayload: { model, messages: messages?.slice(0, 3) },
+      responseBody: null,
+      responseHeaders: {},
+      error: res.statusCode >= 400 ? `HTTP ${res.statusCode}` : null,
+    });
+  });
 
   if (!messages || !Array.isArray(messages) || messages.length === 0) {
     res.status(400).json({

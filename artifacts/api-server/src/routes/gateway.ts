@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { randomUUID } from "crypto";
 import { logger } from "../lib/logger";
+import { recordRequest, getHistory, clearHistory, getStats } from "../lib/stats";
 
 const router = Router();
 
@@ -99,38 +100,6 @@ function messagesToPrompt(messages: Array<{ role: string; content?: string | nul
     .join("\n");
 }
 
-// ── History & stats ──────────────────────────────────────────────────────────
-interface HistoryEntry {
-  id: string;
-  success: boolean;
-  statusCode: number;
-  requestedAt: string;
-  responseTime: number;
-  endpoint: string;
-  method: string;
-  model: string;
-  requestPayload: unknown;
-  responseBody: unknown;
-  responseHeaders: Record<string, string>;
-  error: string | null;
-}
-
-const history: HistoryEntry[] = [];
-const MAX_HISTORY = 200;
-
-function getStats() {
-  const total = history.length;
-  const successCount = history.filter((h) => h.success).length;
-  return {
-    totalRequests: total,
-    successCount,
-    failureCount: total - successCount,
-    avgResponseTime: total > 0
-      ? Math.round(history.reduce((s, h) => s + h.responseTime, 0) / total)
-      : 0,
-    lastRequestAt: history[0]?.requestedAt ?? null,
-  };
-}
 
 // ── Routes ───────────────────────────────────────────────────────────────────
 
@@ -254,8 +223,7 @@ router.post("/gateway/chat", async (req, res) => {
     responseHeaders,
     error,
   };
-  history.unshift(entry);
-  if (history.length > MAX_HISTORY) history.splice(MAX_HISTORY);
+  recordRequest(entry);
 
   res.json({ id, success, statusCode, requestedAt, responseTime,
     endpoint: "chat/completions", method: "POST",
@@ -336,8 +304,7 @@ router.post("/gateway/proxy", async (req, res) => {
     endpoint, method: method.toUpperCase(), model: "",
     requestPayload: payload ?? null, responseBody, responseHeaders, error,
   };
-  history.unshift(entry);
-  if (history.length > MAX_HISTORY) history.splice(MAX_HISTORY);
+  recordRequest(entry);
 
   res.json({ id, success, statusCode, requestedAt, responseTime,
     endpoint, method: method.toUpperCase(),
@@ -347,18 +314,16 @@ router.post("/gateway/proxy", async (req, res) => {
 // GET /api/gateway/history
 router.get("/gateway/history", (req, res) => {
   const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 50;
-  res.json(history.slice(0, limit));
+  res.json(getHistory(limit));
 });
 
 // DELETE /api/gateway/history
-router.delete("/gateway/history", (req, res) => {
-  const cleared = history.length;
-  history.splice(0, history.length);
-  res.json({ cleared });
+router.delete("/gateway/history", (_req, res) => {
+  res.json({ cleared: clearHistory() });
 });
 
 // GET /api/gateway/stats
-router.get("/gateway/stats", (req, res) => {
+router.get("/gateway/stats", (_req, res) => {
   res.json(getStats());
 });
 

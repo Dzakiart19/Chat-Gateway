@@ -90,7 +90,11 @@ export default function Stats() {
                 </div>
                 <div className="grid grid-cols-[200px_1fr] px-5 py-3">
                   <div className="text-sm text-muted-foreground font-medium">Target API</div>
-                  <div className="text-sm font-mono text-foreground">https://chat.qwen.ai/api/v2</div>
+                  <div className="text-sm font-mono text-foreground">
+                    <span className="text-muted-foreground text-xs">upstream →</span>{" "}
+                    https://chat.qwen.ai/api/v2
+                    <span className="ml-2 text-xs text-muted-foreground">(Qwen internal, our API is /v1)</span>
+                  </div>
                 </div>
                 <div className="grid grid-cols-[200px_1fr] px-5 py-3">
                   <div className="text-sm text-muted-foreground font-medium">Last Request</div>
