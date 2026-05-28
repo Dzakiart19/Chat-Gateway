@@ -54,74 +54,48 @@
 }
 
 :root {
-  --background: 240 10% 98%;
-  --foreground: 240 10% 4%;
-  --border: 240 10% 90%;
-  --input: 240 10% 90%;
-  --ring: 170 100% 35%;
+  --background: 0 0% 97%;
+  --foreground: 220 13% 18%;
+  --border: 220 13% 87%;
+  --input: 220 13% 91%;
+  --ring: 216 80% 52%;
   --card: 0 0% 100%;
-  --card-foreground: 240 10% 4%;
-  --card-border: 240 10% 90%;
+  --card-foreground: 220 13% 18%;
+  --card-border: 220 13% 87%;
   --popover: 0 0% 100%;
-  --popover-foreground: 240 10% 4%;
-  --popover-border: 240 10% 90%;
-  --primary: 170 100% 35%;
+  --popover-foreground: 220 13% 18%;
+  --popover-border: 220 13% 87%;
+  --primary: 216 80% 52%;
   --primary-foreground: 0 0% 100%;
-  --secondary: 240 10% 90%;
-  --secondary-foreground: 240 10% 4%;
-  --muted: 240 10% 96%;
-  --muted-foreground: 240 10% 40%;
-  --accent: 170 100% 90%;
-  --accent-foreground: 170 100% 30%;
-  --destructive: 0 84% 60%;
+  --secondary: 220 13% 91%;
+  --secondary-foreground: 220 13% 18%;
+  --muted: 220 13% 93%;
+  --muted-foreground: 220 13% 46%;
+  --accent: 216 80% 95%;
+  --accent-foreground: 216 80% 35%;
+  --destructive: 0 72% 51%;
   --destructive-foreground: 0 0% 100%;
 
-  --sidebar: 240 10% 98%;
-  --sidebar-foreground: 240 10% 20%;
-  --sidebar-border: 240 10% 90%;
-  --sidebar-primary: 170 100% 35%;
+  --sidebar: 220 13% 95%;
+  --sidebar-foreground: 220 13% 30%;
+  --sidebar-border: 220 13% 87%;
+  --sidebar-primary: 216 80% 52%;
   --sidebar-primary-foreground: 0 0% 100%;
-  --sidebar-accent: 240 10% 92%;
-  --sidebar-accent-foreground: 240 10% 10%;
-  --sidebar-ring: 170 100% 35%;
+  --sidebar-accent: 220 13% 91%;
+  --sidebar-accent-foreground: 220 13% 18%;
+  --sidebar-ring: 216 80% 52%;
 
-  --app-font-sans: 'Inter', sans-serif;
+  --app-font-sans: 'Inter', system-ui, sans-serif;
   --app-font-serif: Georgia, serif;
   --app-font-mono: 'JetBrains Mono', 'Fira Code', Menlo, monospace;
-  --radius: 0.25rem;
-}
+  --radius: 0.375rem;
 
-.dark {
-  --background: 240 10% 4%;
-  --foreground: 240 10% 95%;
-  --border: 240 10% 15%;
-  --input: 240 10% 15%;
-  --ring: 170 100% 50%;
-  --card: 240 10% 6%;
-  --card-foreground: 240 10% 95%;
-  --card-border: 240 10% 15%;
-  --popover: 240 10% 6%;
-  --popover-foreground: 240 10% 95%;
-  --popover-border: 240 10% 15%;
-  --primary: 170 100% 45%;
-  --primary-foreground: 240 10% 4%;
-  --secondary: 240 10% 15%;
-  --secondary-foreground: 240 10% 95%;
-  --muted: 240 10% 10%;
-  --muted-foreground: 240 10% 65%;
-  --accent: 170 100% 15%;
-  --accent-foreground: 170 100% 50%;
-  --destructive: 0 62% 30%;
-  --destructive-foreground: 240 10% 95%;
-
-  --sidebar: 240 10% 6%;
-  --sidebar-foreground: 240 10% 80%;
-  --sidebar-border: 240 10% 15%;
-  --sidebar-primary: 170 100% 45%;
-  --sidebar-primary-foreground: 240 10% 4%;
-  --sidebar-accent: 240 10% 15%;
-  --sidebar-accent-foreground: 240 10% 95%;
-  --sidebar-ring: 170 100% 50%;
+  /* Swagger-style method colors */
+  --method-get: 210 70% 58%;
+  --method-post: 145 60% 42%;
+  --method-delete: 0 72% 51%;
+  --method-put: 35 90% 50%;
+  --method-patch: 280 65% 52%;
 }
 
 @layer base {
@@ -132,3 +106,77 @@
     @apply font-sans antialiased bg-background text-foreground;
   }
 }
+
+/* Swagger-like method badges */
+.method-badge-get {
+  background-color: hsl(210 70% 58%);
+  color: white;
+  font-weight: 700;
+  font-size: 0.75rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 0.2rem;
+  letter-spacing: 0.05em;
+  min-width: 4rem;
+  text-align: center;
+}
+.method-badge-post {
+  background-color: hsl(145 60% 42%);
+  color: white;
+  font-weight: 700;
+  font-size: 0.75rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 0.2rem;
+  letter-spacing: 0.05em;
+  min-width: 4rem;
+  text-align: center;
+}
+.method-badge-delete {
+  background-color: hsl(0 72% 51%);
+  color: white;
+  font-weight: 700;
+  font-size: 0.75rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 0.2rem;
+  letter-spacing: 0.05em;
+  min-width: 4rem;
+  text-align: center;
+}
+.method-badge-put {
+  background-color: hsl(35 90% 50%);
+  color: white;
+  font-weight: 700;
+  font-size: 0.75rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 0.2rem;
+  letter-spacing: 0.05em;
+  min-width: 4rem;
+  text-align: center;
+}
+
+/* Endpoint block borders */
+.endpoint-block-post { border-left: 6px solid hsl(145 60% 42%); }
+.endpoint-block-get  { border-left: 6px solid hsl(210 70% 58%); }
+.endpoint-block-delete { border-left: 6px solid hsl(0 72% 51%); }
+
+/* Code blocks */
+.code-block {
+  background: #1e2228;
+  color: #abb2bf;
+  font-family: var(--app-font-mono);
+  font-size: 0.78rem;
+  padding: 1rem;
+  border-radius: 0.375rem;
+  overflow-x: auto;
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+.code-block .key { color: #e06c75; }
+.code-block .str { color: #98c379; }
+.code-block .num { color: #d19a66; }
+.code-block .bool { color: #56b6c2; }
+.code-block .null { color: #56b6c2; }
+
+/* Response status badges */
+.status-2xx { background: #dff0d8; color: #3c763d; border: 1px solid #d6e9c6; border-radius: 3px; padding: 1px 8px; font-size: 0.85rem; font-weight: 600; }
+.status-4xx { background: #f2dede; color: #a94442; border: 1px solid #ebccd1; border-radius: 3px; padding: 1px 8px; font-size: 0.85rem; font-weight: 600; }
+.status-err { background: #f2dede; color: #a94442; border: 1px solid #ebccd1; border-radius: 3px; padding: 1px 8px; font-size: 0.85rem; font-weight: 600; }
