@@ -579,7 +579,8 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
       id,
       object: "chat.completion.chunk",
       created,
-      model: effectiveModel,
+      model: _rawModel,
+      service_tier: "default",
       system_fingerprint: "fp_qwen_gateway",
       choices: [{ index: 0, delta, logprobs: null, finish_reason: finishReason }],
     };
@@ -591,13 +592,16 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
       id,
       object: "chat.completion.chunk",
       created,
-      model: effectiveModel,
+      model: _rawModel,
+      service_tier: "default",
       system_fingerprint: "fp_qwen_gateway",
       choices: [],
       usage: {
         prompt_tokens: inputTokens,
         completion_tokens: outputTokens,
         total_tokens: inputTokens + outputTokens,
+        prompt_tokens_details: { cached_tokens: 0, audio_tokens: 0 },
+        completion_tokens_details: { reasoning_tokens: 0, audio_tokens: 0, accepted_prediction_tokens: 0, rejected_prediction_tokens: 0 },
       },
     };
     return `data: ${JSON.stringify(payload)}\n\n`;
@@ -762,24 +766,29 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
 
     const toolCalls = hasTools ? detectToolCalls(content) : null;
 
+    const usageBlock = {
+      prompt_tokens: inputTokens,
+      completion_tokens: outputTokens,
+      total_tokens: inputTokens + outputTokens,
+      prompt_tokens_details: { cached_tokens: 0, audio_tokens: 0 },
+      completion_tokens_details: { reasoning_tokens: 0, audio_tokens: 0, accepted_prediction_tokens: 0, rejected_prediction_tokens: 0 },
+    };
+
     if (toolCalls) {
       res.json({
         id,
         object: "chat.completion",
         created,
-        model: effectiveModel,
+        model: _rawModel,
+        service_tier: "default",
         system_fingerprint: "fp_qwen_gateway",
         choices: [{
           index: 0,
-          message: { role: "assistant", content: null, tool_calls: toolCalls },
+          message: { role: "assistant", refusal: null, content: null, tool_calls: toolCalls },
           logprobs: null,
           finish_reason: "tool_calls",
         }],
-        usage: {
-          prompt_tokens: inputTokens,
-          completion_tokens: outputTokens,
-          total_tokens: inputTokens + outputTokens,
-        },
+        usage: usageBlock,
       });
       return;
     }
@@ -788,19 +797,16 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
       id,
       object: "chat.completion",
       created,
-      model: effectiveModel,
+      model: _rawModel,
+      service_tier: "default",
       system_fingerprint: "fp_qwen_gateway",
       choices: [{
         index: 0,
-        message: { role: "assistant", content },
+        message: { role: "assistant", refusal: null, content },
         logprobs: null,
         finish_reason: "stop",
       }],
-      usage: {
-        prompt_tokens: inputTokens,
-        completion_tokens: outputTokens,
-        total_tokens: inputTokens + outputTokens,
-      },
+      usage: usageBlock,
     });
   } catch (err) {
     logger.error({ err }, "v1/chat/completions error");
@@ -837,6 +843,162 @@ router.get("/models/:model", requireApiKey, (req, res) => {
     return;
   }
   res.json(found);
+});
+
+// ── POST /v1/completions (legacy text completions) ───────────────────────────
+
+router.post("/completions", requireApiKey, async (req, res) => {
+  const reqId = `cmpl-${randomUUID().replace(/-/g, "").slice(0, 29)}`;
+  const created = Math.floor(Date.now() / 1000);
+
+  const {
+    model: _rawModel = "qwen3-235b-a22b",
+    prompt,
+    max_tokens,
+    temperature: _temp,
+    stream = false,
+    suffix: _suffix,
+    stop: _stop,
+  } = req.body as {
+    model?: string;
+    prompt?: string | string[];
+    max_tokens?: number;
+    temperature?: number;
+    stream?: boolean;
+    suffix?: string;
+    stop?: string | string[];
+  };
+
+  if (!prompt) {
+    res.status(400).json({
+      error: {
+        message: "prompt is required",
+        type: "invalid_request_error",
+        param: "prompt",
+        code: "missing_required_parameter",
+      },
+    });
+    return;
+  }
+
+  const promptText = Array.isArray(prompt) ? prompt.join("") : String(prompt);
+  const model = resolveModel(_rawModel);
+  const temperature = typeof _temp === "number" ? Math.max(0, Math.min(2, _temp)) : 0.7;
+
+  try {
+    const midtoken = await getMidtoken();
+    const headers = qwenHeaders(midtoken);
+    const chatId = await createQwenChat(headers, model);
+
+    const r = await fetch(`${QWEN_BASE}/chat/completions?chat_id=${chatId}`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        stream: true, incremental_output: true, chat_id: chatId, chat_mode: "normal",
+        model,
+        temperature,
+        parent_id: null,
+        messages: [{
+          fid: randomUUID(), parentId: null, childrenIds: [], role: "user",
+          content: promptText, user_action: "chat",
+          files: [],
+          models: [model],
+          chat_type: "t2t",
+          feature_config: { thinking_enabled: false, output_schema: "phase", thinking_budget: 81920 },
+          sub_chat_type: "t2t",
+        }],
+      }),
+    });
+
+    const rawBody = await r.text();
+    const { content, inputTokens, outputTokens } = parseQwenSSE(rawBody);
+
+    if (!content) {
+      res.status(502).json({
+        error: { message: "No response from model", type: "upstream_error", param: null, code: "empty_response" },
+      });
+      return;
+    }
+
+    const usageBlock = {
+      prompt_tokens: inputTokens,
+      completion_tokens: outputTokens,
+      total_tokens: inputTokens + outputTokens,
+      prompt_tokens_details: { cached_tokens: 0, audio_tokens: 0 },
+      completion_tokens_details: { reasoning_tokens: 0, audio_tokens: 0, accepted_prediction_tokens: 0, rejected_prediction_tokens: 0 },
+    };
+
+    if (stream) {
+      res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+      res.setHeader("Cache-Control", "no-cache, no-transform");
+      res.setHeader("Connection", "keep-alive");
+      res.flushHeaders();
+
+      const words = content.split(/(\s+)/);
+      for (const word of words) {
+        if (!word) continue;
+        const chunk = {
+          id: reqId,
+          object: "text_completion",
+          created,
+          model: _rawModel,
+          service_tier: "default",
+          system_fingerprint: "fp_qwen_gateway",
+          choices: [{ text: word, index: 0, logprobs: null, finish_reason: null }],
+        };
+        res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+      }
+      const doneChunk = {
+        id: reqId,
+        object: "text_completion",
+        created,
+        model: _rawModel,
+        service_tier: "default",
+        system_fingerprint: "fp_qwen_gateway",
+        choices: [{ text: "", index: 0, logprobs: null, finish_reason: "stop" }],
+      };
+      res.write(`data: ${JSON.stringify(doneChunk)}\n\n`);
+      res.write("data: [DONE]\n\n");
+      res.end();
+      return;
+    }
+
+    res.json({
+      id: reqId,
+      object: "text_completion",
+      created,
+      model: _rawModel,
+      service_tier: "default",
+      system_fingerprint: "fp_qwen_gateway",
+      choices: [{
+        text: content,
+        index: 0,
+        logprobs: null,
+        finish_reason: "stop",
+      }],
+      usage: usageBlock,
+    });
+  } catch (err) {
+    logger.error({ err }, "v1/completions error");
+    if (!res.headersSent) {
+      res.status(500).json({
+        error: { message: "Internal server error", type: "api_error", param: null, code: "internal_error" },
+      });
+    }
+  }
+});
+
+// ── POST /v1/embeddings ───────────────────────────────────────────────────────
+
+router.post("/embeddings", requireApiKey, (_req, res) => {
+  res.status(400).json({
+    error: {
+      message: "Embeddings are not supported by this gateway. Use a dedicated embeddings provider.",
+      type: "invalid_request_error",
+      param: null,
+      code: "unsupported_endpoint",
+    },
+  });
 });
 
 export default router;

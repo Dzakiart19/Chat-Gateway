@@ -13,12 +13,26 @@ declare global {
 export async function requireApiKey(req: Request, res: Response, next: NextFunction): Promise<void> {
   const auth = req.headers.authorization;
   if (!auth?.startsWith("Bearer ")) {
-    res.status(401).json({ error: "Authorization header with API key required", code: "missing_key" });
+    res.status(401).json({
+      error: {
+        message: "You didn't provide an API key. Include it in the Authorization header: Authorization: Bearer YOUR_API_KEY",
+        type: "invalid_request_error",
+        param: null,
+        code: "missing_api_key",
+      },
+    });
     return;
   }
   const key = auth.slice(7);
   if (!key.startsWith("sk-dzcx")) {
-    res.status(401).json({ error: "Invalid API key format", code: "invalid_key" });
+    res.status(401).json({
+      error: {
+        message: `Incorrect API key provided: ${key.slice(0, 8)}...`,
+        type: "invalid_request_error",
+        param: null,
+        code: "invalid_api_key",
+      },
+    });
     return;
   }
   try {
@@ -26,17 +40,30 @@ export async function requireApiKey(req: Request, res: Response, next: NextFunct
     const hash = hashApiKey(key);
     const doc = await db.collection("api_keys").findOne({ key_hash: hash, is_active: true });
     if (!doc) {
-      res.status(401).json({ error: "Invalid API key", code: "invalid_key" });
+      res.status(401).json({
+        error: {
+          message: `Incorrect API key provided: ${key.slice(0, 8)}...`,
+          type: "invalid_request_error",
+          param: null,
+          code: "invalid_api_key",
+        },
+      });
       return;
     }
     req.apiKeyDoc = { id: String(doc._id), userId: String(doc.user_id), name: String(doc.name) };
-    // Update usage asynchronously — don't block the request
     void db.collection("api_keys").updateOne(
       { _id: doc._id },
       { $inc: { usage_count: 1 }, $set: { last_used_at: new Date() } }
     );
     next();
   } catch (err) {
-    res.status(500).json({ error: "Failed to validate API key" });
+    res.status(500).json({
+      error: {
+        message: "Internal server error while validating API key",
+        type: "api_error",
+        param: null,
+        code: "internal_error",
+      },
+    });
   }
 }
