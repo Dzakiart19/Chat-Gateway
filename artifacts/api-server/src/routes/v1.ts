@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { randomUUID } from "crypto";
+import { randomUUID, createHmac } from "crypto";
 import { requireApiKey } from "../middleware/requireApiKey";
 import { logger } from "../lib/logger";
 import { recordRequest } from "../lib/stats";
@@ -236,26 +236,149 @@ function collectAllImages(messages: Message[]): string[] {
   return messages.flatMap(m => getMessageImages(m.content));
 }
 
-/**
- * Vision / image support is NOT available via the chat.qwen.ai proxy.
- *
- * Root cause: the file upload endpoint (/api/v1/files) requires an authenticated
- * user session cookie — not just an anonymous umid token. Without upload, Qwen
- * rejects any external image URL with "Bad_Request: Internal error". VL model IDs
- * (qwen-vl-max-latest, qwen2.5-vl-72b-instruct, etc.) also do not exist on the
- * chat.qwen.ai web API.
- *
- * To add vision support: proxy requests to the official Qwen DashScope API
- * (https://dashscope.aliyuncs.com/compatible-mode/v1) using DASHSCOPE_API_KEY.
- * DashScope natively supports OpenAI-compatible image_url content parts with
- * models such as qwen-vl-max, qwen-vl-plus, and qwen2.5-vl-72b-instruct.
- */
+// ── Vision / image upload types & helpers ─────────────────────────────────────
 
-function messagesToPrompt(messages: Message[]): string {
+interface QwenFileDescriptor {
+  url: string;
+  type: string;
+  file_type: string;
+  file_class: string;
+  showType: string;
+  status: string;
+  name: string;
+  id: string;
+}
+
+/** Fetch the acw_tc anti-bot cookie from chat.qwen.ai (needed for file uploads). */
+async function getQwenCookies(midtoken: string): Promise<string> {
+  const res = await fetch(QWEN_ORIGIN, {
+    headers: {
+      "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/138.0.0.0 Safari/537.36",
+      "bx-umidtoken": midtoken,
+    },
+    redirect: "follow",
+  });
+  const setCookie = res.headers.get("set-cookie") || "";
+  return setCookie.split(/,(?=[^ ])/).map((c: string) => c.split(";")[0].trim()).join("; ");
+}
+
+/** Detect MIME type from a URL or data URI string. */
+function detectMimeType(url: string): string {
+  if (url.startsWith("data:")) {
+    const m = url.match(/^data:([^;,]+)/);
+    return m?.[1] || "image/jpeg";
+  }
+  const lower = url.toLowerCase();
+  if (lower.includes(".png")) return "image/png";
+  if (lower.includes(".gif")) return "image/gif";
+  if (lower.includes(".webp")) return "image/webp";
+  return "image/jpeg";
+}
+
+/** Fetch image bytes and MIME type from a URL or data URI. */
+async function fetchImageBytes(url: string): Promise<{ buf: Buffer; mimeType: string; filename: string }> {
+  if (url.startsWith("data:")) {
+    const m = url.match(/^data:([^;,]+);base64,(.+)$/);
+    if (!m) throw new Error("Invalid data URI");
+    const mimeType = m[1];
+    const buf = Buffer.from(m[2], "base64");
+    const ext = mimeType.split("/")[1]?.replace("jpeg", "jpg") || "jpg";
+    return { buf, mimeType, filename: `image.${ext}` };
+  }
+  const res = await fetch(url, {
+    headers: { "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/138.0.0.0 Safari/537.36" },
+  });
+  if (!res.ok) throw new Error(`Image fetch failed: ${res.status} ${url}`);
+  const buf = Buffer.from(await res.arrayBuffer());
+  const ct = res.headers.get("content-type")?.split(";")[0].trim() || detectMimeType(url);
+  const mimeType = ct.startsWith("image/") ? ct : detectMimeType(url);
+  const ext = mimeType.split("/")[1]?.replace("jpeg", "jpg") || "jpg";
+  const rawName = url.split("/").pop()?.split("?")[0] || `image.${ext}`;
+  const filename = rawName.includes(".") ? rawName : `${rawName}.${ext}`;
+  return { buf, mimeType, filename };
+}
+
+/**
+ * Upload a single image (URL or base64 data URI) to Qwen OSS and return
+ * a QwenFileDescriptor ready for use in the files[] array.
+ *
+ * Flow: getstsToken → OSS PUT (HMAC-SHA1) → /files/parse → descriptor
+ */
+async function uploadImageToQwen(
+  imageUrl: string,
+  uploadHeaders: Record<string, string>,
+): Promise<QwenFileDescriptor> {
+  const { buf, mimeType, filename } = await fetchImageBytes(imageUrl);
+
+  const stsRes = await fetch(`${QWEN_BASE}/files/getstsToken`, {
+    method: "POST",
+    headers: uploadHeaders,
+    body: JSON.stringify({ filename, filesize: String(buf.length), filetype: "image" }),
+  });
+  const stsData = (await stsRes.json()) as { data: { file_id: string; file_url: string; file_path: string; bucketname: string; endpoint: string; access_key_id: string; access_key_secret: string; security_token: string } };
+  const sts = stsData.data;
+
+  const date = new Date().toUTCString();
+  const stringToSign = `PUT\n\n${mimeType}\n${date}\nx-oss-security-token:${sts.security_token}\n/${sts.bucketname}/${sts.file_path}`;
+  const sig = createHmac("sha1", sts.access_key_secret).update(stringToSign).digest("base64");
+
+  const putRes = await fetch(`https://${sts.bucketname}.${sts.endpoint}/${sts.file_path}`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": mimeType,
+      "Date": date,
+      "Authorization": `OSS ${sts.access_key_id}:${sig}`,
+      "x-oss-security-token": sts.security_token,
+    },
+    body: buf,
+  });
+  if (!putRes.ok) {
+    const errText = await putRes.text().catch(() => "");
+    throw new Error(`OSS PUT failed: ${putRes.status} ${errText.slice(0, 200)}`);
+  }
+
+  await fetch(`${QWEN_BASE}/files/parse`, {
+    method: "POST",
+    headers: uploadHeaders,
+    body: JSON.stringify({ file_id: sts.file_id }),
+  });
+
+  return {
+    url: sts.file_url,
+    type: "image",
+    file_type: mimeType,
+    file_class: "vision",
+    showType: "image",
+    status: "uploaded",
+    name: filename,
+    id: sts.file_id,
+  };
+}
+
+/**
+ * Upload all image URLs to Qwen CDN (parallel). Returns QwenFileDescriptors.
+ * Failures are logged and skipped so a bad image doesn't kill the whole request.
+ */
+async function resolveImageUrls(
+  imageUrls: string[],
+  uploadHeaders: Record<string, string>,
+): Promise<QwenFileDescriptor[]> {
+  const results = await Promise.all(
+    imageUrls.map(u =>
+      uploadImageToQwen(u, uploadHeaders).catch(err => {
+        logger.warn({ err: String(err), url: u.slice(0, 80) }, "vision: image upload failed, skipping");
+        return null;
+      }),
+    ),
+  );
+  return results.filter((r): r is QwenFileDescriptor => r !== null);
+}
+
+function messagesToPrompt(messages: Message[], suppressImageNotes = false): string {
   return messages.map(m => {
     const text = getMessageText(m.content);
     const images = getMessageImages(m.content);
-    const imageNote = images.length > 0
+    const imageNote = (!suppressImageNotes && images.length > 0)
       ? `\n[${images.length} image${images.length > 1 ? "s" : ""} attached]`
       : "";
 
@@ -284,7 +407,7 @@ function messagesToPrompt(messages: Message[]): string {
 // ── Model registry ───────────────────────────────────────────────────────────
 
 const MODELS = [
-  // Text models — confirmed working via chat.qwen.ai proxy
+  // Text + vision models — all available via chat.qwen.ai proxy
   { id: "qwen3.7-max",                 object: "model", created: 1700000000, owned_by: "qwen" },
   { id: "qwen3.6-plus",                object: "model", created: 1700000000, owned_by: "qwen" },
   { id: "qwen3.6-max-preview",         object: "model", created: 1700000000, owned_by: "qwen" },
@@ -293,7 +416,9 @@ const MODELS = [
   { id: "qwen-max-latest",             object: "model", created: 1700000000, owned_by: "qwen" },
   { id: "qwen-turbo-latest",           object: "model", created: 1700000000, owned_by: "qwen" },
   { id: "qwen2.5-coder-32b-instruct",  object: "model", created: 1700000000, owned_by: "qwen" },
-  // Note: VL/vision models require DashScope API (DASHSCOPE_API_KEY) — not available here
+  // Vision-capable model aliases (all route to text models with vision upload support)
+  { id: "qwen-vl-max-latest",          object: "model", created: 1700000000, owned_by: "qwen" },
+  { id: "qwen2.5-vl-72b-instruct",     object: "model", created: 1700000000, owned_by: "qwen" },
 ];
 
 const MODEL_ALIASES: Record<string, string> = {
@@ -328,13 +453,18 @@ const MODEL_ALIASES: Record<string, string> = {
   // qwen2.5-coder small sizes
   "qwen2.5-coder-7b-instruct":  "qwen2.5-coder-32b-instruct",
   "qwen2.5-coder-14b-instruct": "qwen2.5-coder-32b-instruct",
-  // Vision model aliases
-  "qwen-vl-max":           "qwen-vl-max-latest",
-  "qwen-vl":               "qwen-vl-max-latest",
-  "qwen2-vl-7b-instruct":  "qwen2-vl-72b-instruct",
-  "qwen2.5-vl":            "qwen2.5-vl-72b-instruct",
-  "qwen2.5-vl-7b-instruct": "qwen2.5-vl-72b-instruct",
-  "qwen2.5-vl-max":        "qwen-vl-max-latest",
+  // Vision model aliases — vision is handled via OSS image upload, not model ID.
+  // Map all VL/vision model IDs to working chat.qwen.ai text models.
+  "qwen-vl-max":            "qwen3.7-max",
+  "qwen-vl-max-latest":     "qwen3.7-max",
+  "qwen-vl":                "qwen3.7-max",
+  "qwen-vl-plus":           "qwen3.6-plus",
+  "qwen2-vl-7b-instruct":   "qwen3-30b-a3b",
+  "qwen2-vl-72b-instruct":  "qwen3-235b-a22b",
+  "qwen2.5-vl":             "qwen3-235b-a22b",
+  "qwen2.5-vl-7b-instruct": "qwen3-30b-a3b",
+  "qwen2.5-vl-72b-instruct": "qwen3-235b-a22b",
+  "qwen2.5-vl-max":         "qwen3.7-max",
 };
 
 function resolveModel(m: string): string {
@@ -432,7 +562,6 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
   const allImageUrls = collectAllImages(messages);
   const hasImages = allImageUrls.length > 0;
 
-  // Keep user's model as-is; VL model IDs that don't exist on chat.qwen.ai will fall back to qwen3.7-max
   const effectiveModel = model;
 
   const hasTools = Array.isArray(tools) && tools.length > 0 && _toolChoice !== "none";
@@ -485,12 +614,19 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
   try {
     const midtoken = await getMidtoken();
     const headers = qwenHeaders(midtoken);
+
+    // For vision requests, get acw_tc cookie (required by getstsToken upload endpoint)
+    let resolvedFiles: QwenFileDescriptor[] = [];
+    if (hasImages) {
+      const cookie = await getQwenCookies(midtoken);
+      const uploadHeaders = { ...headers, Cookie: cookie };
+      resolvedFiles = await resolveImageUrls(allImageUrls, uploadHeaders);
+    }
+
     const chatId = await createQwenChat(headers, effectiveModel);
 
-    const userPrompt = messagesToPrompt(effectiveMessages);
-
-    // Resolve image URLs (uploading base64 ones to Qwen CDN)
-    const resolvedFiles = hasImages ? await resolveImageUrls(allImageUrls, headers) : [];
+    // Build the prompt; strip image notes when images are handled natively via files[]
+    const userPrompt = messagesToPrompt(effectiveMessages, resolvedFiles.length > 0);
 
     const r2 = await fetch(`${QWEN_BASE}/chat/completions?chat_id=${chatId}`, {
       method: "POST",
@@ -505,9 +641,9 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
           content: userPrompt, user_action: "chat",
           files: resolvedFiles,
           models: [effectiveModel],
-          chat_type: resolvedFiles.length > 0 ? "vl" : "t2t",
+          chat_type: "t2t",
           feature_config: { thinking_enabled: false, output_schema: "phase", thinking_budget: 81920 },
-          sub_chat_type: resolvedFiles.length > 0 ? "vl" : "t2t",
+          sub_chat_type: "t2t",
         }],
       }),
     });
@@ -615,10 +751,6 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
     // ── NON-STREAMING path ───────────────────────────────────────────────────
     const body = await r2.text();
 
-    if (hasImages) {
-      logger.info({ rawSSE: body.slice(0, 1000) }, "vision raw SSE response");
-    }
-
     const { content, inputTokens, outputTokens } = parseQwenSSE(body);
 
     if (!content) {
@@ -690,8 +822,9 @@ router.get("/models", requireApiKey, (_req, res) => {
 // ── GET /v1/models/:model ────────────────────────────────────────────────────
 
 router.get("/models/:model", requireApiKey, (req, res) => {
-  const resolvedId = resolveModel(req.params.model);
-  const found = MODELS.find(m => m.id === resolvedId || m.id === req.params.model);
+  const paramModel = String(req.params.model);
+  const resolvedId = resolveModel(paramModel);
+  const found = MODELS.find(m => m.id === resolvedId || m.id === paramModel);
   if (!found) {
     res.status(404).json({
       error: {
