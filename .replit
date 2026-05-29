@@ -40,13 +40,13 @@ outputType = "console"
 name = "Start application"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "PORT=8081 API_PORT=8080 BASE_PATH=/ pnpm --filter @workspace/gateway run dev"
-waitForPort = 8081
-
 [workflows.workflow.metadata]
 outputType = "webview"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "PORT=24845 API_PORT=8080 BASE_PATH=/ pnpm --filter @workspace/gateway run dev"
+waitForPort = 24845
 
 [agent]
 stack = "PNPM_WORKSPACE"
