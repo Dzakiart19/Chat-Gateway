@@ -10,6 +10,7 @@ import Stats from "@/pages/stats";
 import Dashboard from "@/pages/dashboard";
 import Login from "@/pages/login";
 import Register from "@/pages/register";
+import Landing from "@/pages/landing";
 import Layout from "@/components/layout";
 import { isAuthenticated } from "@/lib/auth";
 
@@ -119,12 +120,21 @@ function PublicOnlyRoute({ component: Component }: { component: React.ComponentT
 function Router() {
   const [location] = useLocation();
   const isAuthPage = location === "/login" || location === "/register";
+  const isLandingPage = location === "/";
 
   if (isAuthPage) {
     return (
       <Switch>
         <Route path="/login" component={() => <PublicOnlyRoute component={Login} />} />
         <Route path="/register" component={() => <PublicOnlyRoute component={Register} />} />
+      </Switch>
+    );
+  }
+
+  if (isLandingPage && !isAuthenticated()) {
+    return (
+      <Switch>
+        <Route path="/" component={Landing} />
       </Switch>
     );
   }
