@@ -10,9 +10,27 @@ const QWEN_ORIGIN = "https://chat.qwen.ai";
 const QWEN_BASE = `${QWEN_ORIGIN}/api/v2`;
 const UMID_URL = "https://sg-wum.alibaba.com/w/wu.json";
 const TOKEN_TTL = 3600_000;
+const CHAT_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
 
 let _midtoken = "";
 let _midtokenTs = 0;
+
+// Cache chat IDs per (apiKey + model) to avoid creating a new chat on every request.
+// Autonomous agents (e.g. Manus) can make dozens of sequential requests per task;
+// reusing the same Qwen chat cuts API calls in half and prevents rate-limit 502s.
+const _chatCache = new Map<string, { id: string; ts: number }>();
+
+function getCachedChatId(apiKey: string, model: string): string | null {
+  const key = `${apiKey}::${model}`;
+  const entry = _chatCache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.ts > CHAT_CACHE_TTL) { _chatCache.delete(key); return null; }
+  return entry.id;
+}
+
+function setCachedChatId(apiKey: string, model: string, chatId: string): void {
+  _chatCache.set(`${apiKey}::${model}`, { id: chatId, ts: Date.now() });
+}
 
 async function getMidtoken(): Promise<string> {
   if (_midtoken && Date.now() - _midtokenTs < TOKEN_TTL) return _midtoken;
@@ -363,7 +381,18 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
   try {
     const midtoken = await getMidtoken();
     const headers = qwenHeaders(midtoken);
-    const chatId = await createQwenChat(headers, model);
+
+    // Reuse cached chat ID per API key + model to avoid creating a new Qwen chat
+    // on every request. Critical for autonomous agents that fire many sequential calls.
+    const apiKey = (req.headers.authorization as string).slice(7);
+    let chatId = getCachedChatId(apiKey, model);
+    if (!chatId) {
+      chatId = await createQwenChat(headers, model);
+      setCachedChatId(apiKey, model, chatId);
+      logger.debug({ model, chatId }, "Created new Qwen chat (cached)");
+    } else {
+      logger.debug({ model, chatId }, "Reusing cached Qwen chat");
+    }
 
     const msgId = randomUUID();
     const userPrompt = messagesToPrompt(effectiveMessages);
