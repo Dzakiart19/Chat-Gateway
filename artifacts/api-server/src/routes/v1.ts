@@ -580,6 +580,23 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
   }
 });
 
+// ── DELETE /v1/session/chat — reset cached Qwen chat for this API key ────────
+// Call this whenever the user starts a "New Chat" in your app so the next
+// request opens a fresh Qwen session instead of continuing the old one.
+
+router.delete("/session/chat", requireApiKey, (req, res) => {
+  const apiKey = (req.headers.authorization as string).slice(7);
+  let cleared = 0;
+  for (const [key] of _chatCache) {
+    if (key.startsWith(`${apiKey}::`)) {
+      _chatCache.delete(key);
+      cleared++;
+    }
+  }
+  logger.info({ cleared }, "Chat session cache cleared for API key");
+  res.json({ success: true, cleared, message: "Chat session reset. Next request will start a fresh Qwen chat." });
+});
+
 // ── GET /v1/models ───────────────────────────────────────────────────────────
 
 router.get("/models", requireApiKey, (_req, res) => {
