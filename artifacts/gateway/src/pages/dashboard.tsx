@@ -74,6 +74,23 @@ function NewKeyBanner({ keyData, onDismiss }: { keyData: NewKeyResult; onDismiss
   );
 }
 
+const SESSION_KEY = "qwen_gw_new_key";
+
+function saveNewKeyToSession(key: NewKeyResult) {
+  try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(key)); } catch { /* ignore */ }
+}
+
+function loadNewKeyFromSession(): NewKeyResult | null {
+  try {
+    const raw = sessionStorage.getItem(SESSION_KEY);
+    return raw ? JSON.parse(raw) as NewKeyResult : null;
+  } catch { return null; }
+}
+
+function clearNewKeyFromSession() {
+  try { sessionStorage.removeItem(SESSION_KEY); } catch { /* ignore */ }
+}
+
 export default function Dashboard() {
   const user = getUser();
   const [keys, setKeys] = useState<ApiKeyInfo[]>([]);
@@ -81,7 +98,7 @@ export default function Dashboard() {
   const [creating, setCreating] = useState(false);
   const [newKeyName, setNewKeyName] = useState("");
   const [showForm, setShowForm] = useState(false);
-  const [newKey, setNewKey] = useState<NewKeyResult | null>(null);
+  const [newKey, setNewKey] = useState<NewKeyResult | null>(() => loadNewKeyFromSession());
   const [revoking, setRevoking] = useState<string | null>(null);
 
   const loadKeys = useCallback(async () => {
@@ -105,6 +122,7 @@ export default function Dashboard() {
       const data = await res.json() as NewKeyResult & { error?: string };
       if (!res.ok) { toast.error(data.error ?? "Failed to create key"); return; }
       setNewKey(data);
+      saveNewKeyToSession(data);
       setNewKeyName("");
       setShowForm(false);
       await loadKeys();
@@ -123,7 +141,7 @@ export default function Dashboard() {
       if (res.ok) {
         toast.success("API key revoked");
         setKeys(k => k.filter(x => x.id !== id));
-        if (newKey?.id === id) setNewKey(null);
+        if (newKey?.id === id) { setNewKey(null); clearNewKeyFromSession(); }
       } else {
         const d = await res.json() as { error?: string };
         toast.error(d.error ?? "Failed to revoke key");
@@ -178,7 +196,7 @@ const client = new OpenAI({
 
       <div className="flex-1 p-3 sm:p-6 max-w-4xl mx-auto w-full space-y-6">
         {/* New key banner */}
-        {newKey && <NewKeyBanner keyData={newKey} onDismiss={() => setNewKey(null)} />}
+        {newKey && <NewKeyBanner keyData={newKey} onDismiss={() => { setNewKey(null); clearNewKeyFromSession(); }} />}
 
         {/* API Keys card */}
         <div className="bg-card border border-border rounded-xl shadow-sm overflow-hidden">
