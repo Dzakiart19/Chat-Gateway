@@ -9,25 +9,6 @@ const router = Router();
 
 const QWEN_ORIGIN = "https://chat.qwen.ai";
 const QWEN_BASE = `${QWEN_ORIGIN}/api/v2`;
-const CHAT_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
-
-// Cache chat IDs per (apiKey + model) to avoid creating a new chat on every request.
-// Autonomous agents (e.g. Manus) can make dozens of sequential requests per task;
-// reusing the same Qwen chat cuts API calls in half and prevents rate-limit 502s.
-const _chatCache = new Map<string, { id: string; ts: number }>();
-
-function getCachedChatId(apiKey: string, model: string): string | null {
-  const key = `${apiKey}::${model}`;
-  const entry = _chatCache.get(key);
-  if (!entry) return null;
-  if (Date.now() - entry.ts > CHAT_CACHE_TTL) { _chatCache.delete(key); return null; }
-  return entry.id;
-}
-
-function setCachedChatId(apiKey: string, model: string, chatId: string): void {
-  _chatCache.set(`${apiKey}::${model}`, { id: chatId, ts: Date.now() });
-}
-
 // getMidtoken now delegates to the shared rotating pool
 async function getMidtoken(): Promise<string> {
   return getPooledMidtoken();
@@ -369,20 +350,8 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
   try {
     const midtoken = await getMidtoken();
     const headers = qwenHeaders(midtoken);
+    const chatId = await createQwenChat(headers, model);
 
-    // Reuse cached chat ID per API key + model to avoid creating a new Qwen chat
-    // on every request. Critical for autonomous agents that fire many sequential calls.
-    const apiKey = (req.headers.authorization as string).slice(7);
-    let chatId = getCachedChatId(apiKey, model);
-    if (!chatId) {
-      chatId = await createQwenChat(headers, model);
-      setCachedChatId(apiKey, model, chatId);
-      logger.debug({ model, chatId }, "Created new Qwen chat (cached)");
-    } else {
-      logger.debug({ model, chatId }, "Reusing cached Qwen chat");
-    }
-
-    const msgId = randomUUID();
     const userPrompt = messagesToPrompt(effectiveMessages);
 
     const r2 = await fetch(`${QWEN_BASE}/chat/completions?chat_id=${chatId}`, {
@@ -393,7 +362,7 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
         temperature,
         parent_id: null,
         messages: [{
-          fid: msgId, parentId: null, childrenIds: [], role: "user",
+          fid: randomUUID(), parentId: null, childrenIds: [], role: "user",
           content: userPrompt, user_action: "chat", files: [], models: [model],
           chat_type: "t2t",
           feature_config: { thinking_enabled: false, output_schema: "phase", thinking_budget: 81920 },
@@ -566,23 +535,6 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
       res.end();
     }
   }
-});
-
-// ── DELETE /v1/session/chat — reset cached Qwen chat for this API key ────────
-// Call this whenever the user starts a "New Chat" in your app so the next
-// request opens a fresh Qwen session instead of continuing the old one.
-
-router.delete("/session/chat", requireApiKey, (req, res) => {
-  const apiKey = (req.headers.authorization as string).slice(7);
-  let cleared = 0;
-  for (const [key] of _chatCache) {
-    if (key.startsWith(`${apiKey}::`)) {
-      _chatCache.delete(key);
-      cleared++;
-    }
-  }
-  logger.info({ cleared }, "Chat session cache cleared for API key");
-  res.json({ success: true, cleared, message: "Chat session reset. Next request will start a fresh Qwen chat." });
 });
 
 // ── GET /v1/models ───────────────────────────────────────────────────────────
