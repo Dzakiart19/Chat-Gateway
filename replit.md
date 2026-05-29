@@ -1,45 +1,48 @@
-# [Project name]
+# Dzeck API AI (Qwen API Gateway)
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+A gateway service that lets users access Qwen AI models via an OpenAI-compatible API, with API key management, request history, and a playground UI.
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
+- **Frontend** (port 5000): `PORT=5000 API_PORT=8080 BASE_PATH=/ pnpm --filter @workspace/gateway run dev`
+- **API Server** (port 8080): `PORT=8080 pnpm --filter @workspace/api-server run dev`
+- `pnpm run build` — build all packages (frontend + backend)
 - `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+
+## Required Environment Variables
+
+All set in Replit shared env vars:
+- `MONGODB_URI` — MongoDB connection string
+- `MONGODB_DATABASE` — MongoDB database name (e.g. `qwen_gateway`)
+- `JWT_SECRET` — Secret for signing JWTs
+- `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD` — Redis connection (optional)
+- `POSTGRES_URL` — PostgreSQL connection string (optional)
 
 ## Stack
 
 - pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5
-- DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
-- API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
+- **Frontend**: React 19, Vite, Tailwind CSS 4, Radix UI, Wouter, TanStack Query
+- **Backend**: Express 5, MongoDB, JWT auth, bcryptjs
+- **Build**: esbuild (ESM bundle for server), Vite (frontend)
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `artifacts/api-server/` — Express backend (auth, API keys, Qwen proxy)
+- `artifacts/gateway/` — React frontend (dashboard, playground, API key management)
+- `lib/api-spec/` — OpenAPI spec (source of truth for API contract)
+- `lib/api-client-react/` — Generated React query hooks
+- `lib/api-zod/` — Generated Zod schemas
+- `artifacts/api-server/src/routes/v1.ts` — OpenAI-compatible `/v1/chat/completions` endpoint
+- `artifacts/api-server/src/lib/auth-helpers.ts` — JWT + API key utilities
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
-
-## Product
-
-_Describe the high-level user-facing capabilities of this app once they exist._
+- Backend proxies requests to `chat.qwen.ai` — no official Qwen SDK needed
+- Frontend dev server proxies `/api` and `/v1` to the backend at port 8080
+- Production: backend serves the Vite-built frontend as static files from `dist/public`
+- Custom JWT auth (not Replit Auth) — users register/login with email+password stored in MongoDB
 
 ## User preferences
 
-_Populate as you build — explicit user instructions worth remembering across sessions._
-
-## Gotchas
-
-_Populate as you build — sharp edges, "always run X before Y" rules._
-
-## Pointers
-
-- See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
+- Keep sensitive credentials in env vars (not secrets tab)
