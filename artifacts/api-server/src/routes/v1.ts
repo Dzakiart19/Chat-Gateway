@@ -209,14 +209,31 @@ function messagesToPrompt(messages: Message[]): string {
 // ── Model registry ───────────────────────────────────────────────────────────
 
 const MODELS = [
-  { id: "qwen3-235b-a22b",  object: "model", created: 1700000000, owned_by: "qwen" },
-  { id: "qwen3-30b-a3b",    object: "model", created: 1700000000, owned_by: "qwen" },
-  { id: "qwen3-7b",         object: "model", created: 1700000000, owned_by: "qwen" },
-  { id: "qwen3-4b",         object: "model", created: 1700000000, owned_by: "qwen" },
-  { id: "qwen-plus-latest", object: "model", created: 1700000000, owned_by: "qwen" },
-  { id: "qwen-max-latest",  object: "model", created: 1700000000, owned_by: "qwen" },
-  { id: "qwen3.7-max",      object: "model", created: 1700000000, owned_by: "qwen" },
+  { id: "qwen3-235b-a22b", object: "model", created: 1700000000, owned_by: "qwen" },
+  { id: "qwen3-30b-a3b",   object: "model", created: 1700000000, owned_by: "qwen" },
+  { id: "qwen-max-latest", object: "model", created: 1700000000, owned_by: "qwen" },
+  { id: "qwen3.7-max",     object: "model", created: 1700000000, owned_by: "qwen" },
 ];
+
+const MODEL_ALIASES: Record<string, string> = {
+  "qwen-max":        "qwen3-235b-a22b",
+  "qwen-plus":       "qwen3-30b-a3b",
+  "qwen-turbo":      "qwen3-30b-a3b",
+  "qwen-plus-latest":"qwen3-30b-a3b",
+  "qwen3-7b":        "qwen3-30b-a3b",
+  "qwen3-4b":        "qwen3-30b-a3b",
+  "qwen3-14b":       "qwen3-30b-a3b",
+  "qwen3-32b":       "qwen3-235b-a22b",
+  "qwen3-72b":       "qwen3-235b-a22b",
+  "qwen2.5-72b-instruct":  "qwen3-235b-a22b",
+  "qwen2.5-32b-instruct":  "qwen3-235b-a22b",
+  "qwen2.5-14b-instruct":  "qwen3-30b-a3b",
+  "qwen2.5-7b-instruct":   "qwen3-30b-a3b",
+};
+
+function resolveModel(m: string): string {
+  return MODEL_ALIASES[m] ?? m;
+}
 
 // ── POST /v1/chat/completions ────────────────────────────────────────────────
 
@@ -225,7 +242,7 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
   const reqId = `v1-${randomUUID().replace(/-/g, "").slice(0, 20)}`;
 
   const {
-    model = "qwen3-235b-a22b",
+    model: _rawModel = "qwen3-235b-a22b",
     messages,
     tools,
     tool_choice: _toolChoice,
@@ -262,6 +279,8 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
     logprobs?: boolean | null;
     top_logprobs?: number | null;
   };
+
+  const model = resolveModel(_rawModel);
 
   const temperature = typeof _temp === "number"
     ? Math.max(0, Math.min(2, _temp))
