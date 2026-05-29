@@ -209,26 +209,50 @@ function messagesToPrompt(messages: Message[]): string {
 // ── Model registry ───────────────────────────────────────────────────────────
 
 const MODELS = [
-  { id: "qwen3-235b-a22b", object: "model", created: 1700000000, owned_by: "qwen" },
-  { id: "qwen3-30b-a3b",   object: "model", created: 1700000000, owned_by: "qwen" },
-  { id: "qwen-max-latest", object: "model", created: 1700000000, owned_by: "qwen" },
-  { id: "qwen3.7-max",     object: "model", created: 1700000000, owned_by: "qwen" },
+  // Confirmed working via full completion test
+  { id: "qwen3.7-max",                 object: "model", created: 1700000000, owned_by: "qwen" },
+  { id: "qwen3.6-plus",                object: "model", created: 1700000000, owned_by: "qwen" },
+  { id: "qwen3.6-max-preview",         object: "model", created: 1700000000, owned_by: "qwen" },
+  { id: "qwen3-235b-a22b",             object: "model", created: 1700000000, owned_by: "qwen" },
+  { id: "qwen3-30b-a3b",               object: "model", created: 1700000000, owned_by: "qwen" },
+  { id: "qwen-max-latest",             object: "model", created: 1700000000, owned_by: "qwen" },
+  { id: "qwen-turbo-latest",           object: "model", created: 1700000000, owned_by: "qwen" },
+  { id: "qwen2.5-coder-32b-instruct",  object: "model", created: 1700000000, owned_by: "qwen" },
 ];
 
+// Aliases: map common/old names → nearest working model
 const MODEL_ALIASES: Record<string, string> = {
-  "qwen-max":        "qwen3-235b-a22b",
-  "qwen-plus":       "qwen3-30b-a3b",
-  "qwen-turbo":      "qwen3-30b-a3b",
-  "qwen-plus-latest":"qwen3-30b-a3b",
-  "qwen3-7b":        "qwen3-30b-a3b",
-  "qwen3-4b":        "qwen3-30b-a3b",
-  "qwen3-14b":       "qwen3-30b-a3b",
-  "qwen3-32b":       "qwen3-235b-a22b",
-  "qwen3-72b":       "qwen3-235b-a22b",
-  "qwen2.5-72b-instruct":  "qwen3-235b-a22b",
-  "qwen2.5-32b-instruct":  "qwen3-235b-a22b",
-  "qwen2.5-14b-instruct":  "qwen3-30b-a3b",
+  // qwen-max family
+  "qwen-max":              "qwen3.7-max",
+  "qwen-max-0919":         "qwen3.7-max",
+  // qwen-plus family
+  "qwen-plus":             "qwen3.6-plus",
+  "qwen-plus-latest":      "qwen3.6-plus",
+  "qwen-plus-0723":        "qwen3.6-plus",
+  // qwen-turbo family
+  "qwen-turbo":            "qwen-turbo-latest",
+  "qwen-turbo-0919":       "qwen-turbo-latest",
+  // qwen-long
+  "qwen-long":             "qwen3.6-plus",
+  // qwq / reasoning
+  "qwq-32b":               "qwen3.7-max",
+  "qwq-32b-preview":       "qwen3.7-max",
+  // qwen3 small/mid (not available on web UI)
+  "qwen3-0.6b":            "qwen3-30b-a3b",
+  "qwen3-1.7b":            "qwen3-30b-a3b",
+  "qwen3-4b":              "qwen3-30b-a3b",
+  "qwen3-8b":              "qwen3-30b-a3b",
+  "qwen3-14b":             "qwen3-30b-a3b",
+  "qwen3-32b":             "qwen3-235b-a22b",
+  "qwen3-72b":             "qwen3-235b-a22b",
+  // qwen2.5 instruct series
   "qwen2.5-7b-instruct":   "qwen3-30b-a3b",
+  "qwen2.5-14b-instruct":  "qwen3-30b-a3b",
+  "qwen2.5-32b-instruct":  "qwen3-235b-a22b",
+  "qwen2.5-72b-instruct":  "qwen3-235b-a22b",
+  // qwen2.5-coder small sizes
+  "qwen2.5-coder-7b-instruct":  "qwen2.5-coder-32b-instruct",
+  "qwen2.5-coder-14b-instruct": "qwen2.5-coder-32b-instruct",
 };
 
 function resolveModel(m: string): string {
