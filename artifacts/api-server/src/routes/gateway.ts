@@ -2,35 +2,17 @@ import { Router } from "express";
 import { randomUUID } from "crypto";
 import { logger } from "../lib/logger";
 import { recordRequest, getHistory, clearHistory, getStats } from "../lib/stats";
+import { getPooledMidtoken, getPoolStatus } from "../lib/umid-pool";
 
 const router = Router();
 
 // ── Keyless Qwen config ──────────────────────────────────────────────────────
 const QWEN_ORIGIN = "https://chat.qwen.ai";
 const QWEN_BASE = `${QWEN_ORIGIN}/api/v2`;
-const UMID_URL = "https://sg-wum.alibaba.com/w/wu.json";
-const TOKEN_TTL = 3600_000; // 1 hour
 
-let _midtoken = "";
-let _midtokenTs = 0;
-
+// Delegates to shared rotating pool — 8 tokens, round-robin per request
 async function getMidtoken(): Promise<string> {
-  if (_midtoken && Date.now() - _midtokenTs < TOKEN_TTL) return _midtoken;
-  try {
-    const res = await fetch(UMID_URL, {
-      headers: { "User-Agent": "Mozilla/5.0 Chrome/138.0.0.0 Safari/537.36" },
-    });
-    const text = await res.text();
-    const m = text.match(/(?:umx\.wu|__fycb)\('([^']+)'\)/);
-    if (m) {
-      _midtoken = m[1];
-      _midtokenTs = Date.now();
-      logger.info("bx-umidtoken refreshed");
-    }
-  } catch (err) {
-    logger.warn({ err }, "Failed to fetch bx-umidtoken");
-  }
-  return _midtoken;
+  return getPooledMidtoken();
 }
 
 function qwenHeaders(midtoken: string): Record<string, string> {
@@ -325,6 +307,11 @@ router.delete("/gateway/history", (_req, res) => {
 // GET /api/gateway/stats
 router.get("/gateway/stats", (_req, res) => {
   res.json(getStats());
+});
+
+// GET /api/gateway/token-pool — status of the rotating bx-umidtoken pool
+router.get("/gateway/token-pool", (_req, res) => {
+  res.json(getPoolStatus());
 });
 
 export default router;

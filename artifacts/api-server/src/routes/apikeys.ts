@@ -6,11 +6,8 @@ import { generateApiKey } from "../lib/auth-helpers";
 
 const router = Router();
 
-// All routes require JWT
-router.use(requireJwt);
-
 // GET /api/apikeys
-router.get("/apikeys", async (req, res) => {
+router.get("/apikeys", requireJwt, async (req, res) => {
   try {
     const db = await getDb();
     const keys = await db
@@ -35,7 +32,7 @@ router.get("/apikeys", async (req, res) => {
 });
 
 // POST /api/apikeys
-router.post("/apikeys", async (req, res) => {
+router.post("/apikeys", requireJwt, async (req, res) => {
   const { name = "My API Key" } = req.body as { name?: string };
   try {
     const db = await getDb();
@@ -72,7 +69,7 @@ router.post("/apikeys", async (req, res) => {
 });
 
 // DELETE /api/apikeys/:id
-router.delete("/apikeys/:id", async (req, res) => {
+router.delete("/apikeys/:id", requireJwt, async (req, res) => {
   try {
     const db = await getDb();
     let oid: ObjectId;

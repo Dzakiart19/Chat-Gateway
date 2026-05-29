@@ -3,17 +3,13 @@ import { randomUUID } from "crypto";
 import { requireApiKey } from "../middleware/requireApiKey";
 import { logger } from "../lib/logger";
 import { recordRequest } from "../lib/stats";
+import { getPooledMidtoken, getPoolStatus } from "../lib/umid-pool";
 
 const router = Router();
 
 const QWEN_ORIGIN = "https://chat.qwen.ai";
 const QWEN_BASE = `${QWEN_ORIGIN}/api/v2`;
-const UMID_URL = "https://sg-wum.alibaba.com/w/wu.json";
-const TOKEN_TTL = 3600_000;
 const CHAT_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
-
-let _midtoken = "";
-let _midtokenTs = 0;
 
 // Cache chat IDs per (apiKey + model) to avoid creating a new chat on every request.
 // Autonomous agents (e.g. Manus) can make dozens of sequential requests per task;
@@ -32,17 +28,9 @@ function setCachedChatId(apiKey: string, model: string, chatId: string): void {
   _chatCache.set(`${apiKey}::${model}`, { id: chatId, ts: Date.now() });
 }
 
+// getMidtoken now delegates to the shared rotating pool
 async function getMidtoken(): Promise<string> {
-  if (_midtoken && Date.now() - _midtokenTs < TOKEN_TTL) return _midtoken;
-  try {
-    const res = await fetch(UMID_URL, {
-      headers: { "User-Agent": "Mozilla/5.0 Chrome/138.0.0.0 Safari/537.36" },
-    });
-    const text = await res.text();
-    const m = text.match(/(?:umx\.wu|__fycb)\('([^']+)'\)/);
-    if (m) { _midtoken = m[1]; _midtokenTs = Date.now(); }
-  } catch { /* ignore */ }
-  return _midtoken;
+  return getPooledMidtoken();
 }
 
 function qwenHeaders(midtoken: string): Record<string, string> {
