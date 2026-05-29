@@ -3,13 +3,13 @@ import { randomUUID } from "crypto";
 import { requireApiKey } from "../middleware/requireApiKey";
 import { logger } from "../lib/logger";
 import { recordRequest } from "../lib/stats";
-import { getPooledMidtoken, getPoolStatus } from "../lib/umid-pool";
+import { getPooledMidtoken } from "../lib/umid-pool";
 
 const router = Router();
 
 const QWEN_ORIGIN = "https://chat.qwen.ai";
 const QWEN_BASE = `${QWEN_ORIGIN}/api/v2`;
-// getMidtoken now delegates to the shared rotating pool
+
 async function getMidtoken(): Promise<string> {
   return getPooledMidtoken();
 }
@@ -110,11 +110,11 @@ RESPONSE FORMAT — when calling a tool, output ONLY this raw JSON (no markdown,
 
 When NOT calling a tool, respond normally in plain text.`;
 
-  let result: Array<{ role: string; content?: string | null }>;
+  let result: Array<{ role: string; content?: string | ContentPart[] | null }>;
   const first = messages[0];
   if (first?.role === "system") {
     result = [
-      { role: "system", content: `${first.content ?? ""}\n\n${systemBlock}` },
+      { role: "system", content: `${getMessageText(first.content)}\n\n${systemBlock}` },
       ...messages.slice(1),
     ];
   } else {
@@ -127,9 +127,17 @@ When NOT calling a tool, respond normally in plain text.`;
     const reminder = forcedTool
       ? `\n\n[SYSTEM: You MUST call the tool "${forcedTool}" to answer this. Output only the JSON tool_calls object.]`
       : `\n\n[SYSTEM: If this request needs live data or an action you cannot do internally, call the appropriate tool. Output ONLY the JSON object {"tool_calls":[...]} with no other text.]`;
+
+    const lastText = getMessageText(last.content);
+    const lastImages = getMessageImages(last.content);
     result = [
       ...result.slice(0, lastIdx),
-      { role: "user", content: `${last.content ?? ""}${reminder}` },
+      {
+        role: "user",
+        content: lastImages.length > 0
+          ? buildMultipartContent(lastText + reminder, lastImages)
+          : `${lastText}${reminder}`,
+      },
     ];
   }
 
@@ -142,7 +150,7 @@ function injectJsonMode(messages: Message[]): Message[] {
   const first = messages[0];
   if (first?.role === "system") {
     return [
-      { role: "system", content: `${first.content ?? ""}\n\n${jsonInstruction}` },
+      { role: "system", content: `${getMessageText(first.content)}\n\n${jsonInstruction}` },
       ...messages.slice(1),
     ];
   }
@@ -172,19 +180,86 @@ function detectToolCalls(raw: string): DetectedToolCall[] | null {
   }
 }
 
+// ── Vision / multipart content types ─────────────────────────────────────────
+
+interface TextContentPart {
+  type: "text";
+  text: string;
+}
+
+interface ImageUrlContentPart {
+  type: "image_url";
+  image_url: { url: string; detail?: "low" | "high" | "auto" };
+}
+
+type ContentPart = TextContentPart | ImageUrlContentPart;
+
 interface Message {
   role: string;
-  content?: string | null;
+  content?: string | ContentPart[] | null;
   tool_calls?: Array<{ id: string; type: string; function: { name: string; arguments: string } }>;
   tool_call_id?: string;
   name?: string;
 }
 
+/** Extract plain text from a message content (string or multipart array). */
+function getMessageText(content: string | ContentPart[] | null | undefined): string {
+  if (!content) return "";
+  if (typeof content === "string") return content;
+  return content
+    .filter((p): p is TextContentPart => p.type === "text")
+    .map(p => p.text)
+    .join("\n");
+}
+
+/** Extract image URLs from a message content array. */
+function getMessageImages(content: string | ContentPart[] | null | undefined): string[] {
+  if (!content || typeof content === "string") return [];
+  return content
+    .filter((p): p is ImageUrlContentPart => p.type === "image_url")
+    .map(p => p.image_url?.url)
+    .filter((u): u is string => Boolean(u));
+}
+
+/** Build a multipart content array from text + image URLs. */
+function buildMultipartContent(text: string, images: string[]): ContentPart[] {
+  const parts: ContentPart[] = [];
+  if (text) parts.push({ type: "text", text });
+  for (const url of images) {
+    parts.push({ type: "image_url", image_url: { url } });
+  }
+  return parts;
+}
+
+/** Collect all image URLs from all messages in a conversation. */
+function collectAllImages(messages: Message[]): string[] {
+  return messages.flatMap(m => getMessageImages(m.content));
+}
+
+/**
+ * Vision / image support is NOT available via the chat.qwen.ai proxy.
+ *
+ * Root cause: the file upload endpoint (/api/v1/files) requires an authenticated
+ * user session cookie — not just an anonymous umid token. Without upload, Qwen
+ * rejects any external image URL with "Bad_Request: Internal error". VL model IDs
+ * (qwen-vl-max-latest, qwen2.5-vl-72b-instruct, etc.) also do not exist on the
+ * chat.qwen.ai web API.
+ *
+ * To add vision support: proxy requests to the official Qwen DashScope API
+ * (https://dashscope.aliyuncs.com/compatible-mode/v1) using DASHSCOPE_API_KEY.
+ * DashScope natively supports OpenAI-compatible image_url content parts with
+ * models such as qwen-vl-max, qwen-vl-plus, and qwen2.5-vl-72b-instruct.
+ */
+
 function messagesToPrompt(messages: Message[]): string {
   return messages.map(m => {
-    if (m.role === "system") {
-      return `System: ${m.content ?? ""}`;
-    }
+    const text = getMessageText(m.content);
+    const images = getMessageImages(m.content);
+    const imageNote = images.length > 0
+      ? `\n[${images.length} image${images.length > 1 ? "s" : ""} attached]`
+      : "";
+
+    if (m.role === "system") return `System: ${text}${imageNote}`;
     if (m.role === "assistant") {
       if (m.tool_calls && m.tool_calls.length > 0) {
         const calls = m.tool_calls.map(tc => ({
@@ -193,23 +268,23 @@ function messagesToPrompt(messages: Message[]): string {
           arguments: (() => { try { return JSON.parse(tc.function.arguments); } catch { return tc.function.arguments; } })(),
         }));
         const toolJson = JSON.stringify({ tool_calls: calls });
-        const extra = m.content ? `${m.content}\n` : "";
+        const extra = text ? `${text}\n` : "";
         return `Assistant: ${extra}${toolJson}`;
       }
-      return `Assistant: ${m.content ?? ""}`;
+      return `Assistant: ${text}${imageNote}`;
     }
     if (m.role === "tool") {
       const toolName = m.name ? ` (${m.name})` : "";
-      return `Tool Result${toolName} [id=${m.tool_call_id ?? "?"}]: ${m.content ?? ""}`;
+      return `Tool Result${toolName} [id=${m.tool_call_id ?? "?"}]: ${text}`;
     }
-    return `User: ${m.content ?? ""}`;
+    return `User: ${text}${imageNote}`;
   }).join("\n");
 }
 
 // ── Model registry ───────────────────────────────────────────────────────────
 
 const MODELS = [
-  // Confirmed working via full completion test
+  // Text models — confirmed working via chat.qwen.ai proxy
   { id: "qwen3.7-max",                 object: "model", created: 1700000000, owned_by: "qwen" },
   { id: "qwen3.6-plus",                object: "model", created: 1700000000, owned_by: "qwen" },
   { id: "qwen3.6-max-preview",         object: "model", created: 1700000000, owned_by: "qwen" },
@@ -218,9 +293,9 @@ const MODELS = [
   { id: "qwen-max-latest",             object: "model", created: 1700000000, owned_by: "qwen" },
   { id: "qwen-turbo-latest",           object: "model", created: 1700000000, owned_by: "qwen" },
   { id: "qwen2.5-coder-32b-instruct",  object: "model", created: 1700000000, owned_by: "qwen" },
+  // Note: VL/vision models require DashScope API (DASHSCOPE_API_KEY) — not available here
 ];
 
-// Aliases: map common/old names → nearest working model
 const MODEL_ALIASES: Record<string, string> = {
   // qwen-max family
   "qwen-max":              "qwen3.7-max",
@@ -237,7 +312,7 @@ const MODEL_ALIASES: Record<string, string> = {
   // qwq / reasoning
   "qwq-32b":               "qwen3.7-max",
   "qwq-32b-preview":       "qwen3.7-max",
-  // qwen3 small/mid (not available on web UI)
+  // qwen3 small/mid
   "qwen3-0.6b":            "qwen3-30b-a3b",
   "qwen3-1.7b":            "qwen3-30b-a3b",
   "qwen3-4b":              "qwen3-30b-a3b",
@@ -253,10 +328,22 @@ const MODEL_ALIASES: Record<string, string> = {
   // qwen2.5-coder small sizes
   "qwen2.5-coder-7b-instruct":  "qwen2.5-coder-32b-instruct",
   "qwen2.5-coder-14b-instruct": "qwen2.5-coder-32b-instruct",
+  // Vision model aliases
+  "qwen-vl-max":           "qwen-vl-max-latest",
+  "qwen-vl":               "qwen-vl-max-latest",
+  "qwen2-vl-7b-instruct":  "qwen2-vl-72b-instruct",
+  "qwen2.5-vl":            "qwen2.5-vl-72b-instruct",
+  "qwen2.5-vl-7b-instruct": "qwen2.5-vl-72b-instruct",
+  "qwen2.5-vl-max":        "qwen-vl-max-latest",
 };
 
 function resolveModel(m: string): string {
   return MODEL_ALIASES[m] ?? m;
+}
+
+/** True if the model natively supports vision input. */
+function isVisionModel(model: string): boolean {
+  return model.includes("vl") || model.includes("vision");
 }
 
 // ── POST /v1/chat/completions ────────────────────────────────────────────────
@@ -275,7 +362,6 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
     stream = false,
     stream_options,
     response_format,
-    // Accepted but not forwarded (graceful ignore)
     stop: _stop,
     n: _n,
     top_p: _topP,
@@ -313,7 +399,6 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
   const includeUsage = stream_options?.include_usage === true;
   const jsonMode = response_format?.type === "json_object";
 
-  // Record every request once response is finished (covers all paths incl. streaming)
   res.on("finish", () => {
     recordRequest({
       id: reqId,
@@ -343,6 +428,13 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
     return;
   }
 
+  // Detect images across all messages
+  const allImageUrls = collectAllImages(messages);
+  const hasImages = allImageUrls.length > 0;
+
+  // Keep user's model as-is; VL model IDs that don't exist on chat.qwen.ai will fall back to qwen3.7-max
+  const effectiveModel = model;
+
   const hasTools = Array.isArray(tools) && tools.length > 0 && _toolChoice !== "none";
 
   let effectiveMessages = messages;
@@ -358,7 +450,7 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
       id,
       object: "chat.completion.chunk",
       created,
-      model,
+      model: effectiveModel,
       system_fingerprint: "fp_qwen_gateway",
       choices: [{ index: 0, delta, logprobs: null, finish_reason: finishReason }],
     };
@@ -370,7 +462,7 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
       id,
       object: "chat.completion.chunk",
       created,
-      model,
+      model: effectiveModel,
       system_fingerprint: "fp_qwen_gateway",
       choices: [],
       usage: {
@@ -393,23 +485,29 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
   try {
     const midtoken = await getMidtoken();
     const headers = qwenHeaders(midtoken);
-    const chatId = await createQwenChat(headers, model);
+    const chatId = await createQwenChat(headers, effectiveModel);
 
     const userPrompt = messagesToPrompt(effectiveMessages);
+
+    // Resolve image URLs (uploading base64 ones to Qwen CDN)
+    const resolvedFiles = hasImages ? await resolveImageUrls(allImageUrls, headers) : [];
 
     const r2 = await fetch(`${QWEN_BASE}/chat/completions?chat_id=${chatId}`, {
       method: "POST",
       headers,
       body: JSON.stringify({
-        stream: true, incremental_output: true, chat_id: chatId, chat_mode: "normal", model,
+        stream: true, incremental_output: true, chat_id: chatId, chat_mode: "normal",
+        model: effectiveModel,
         temperature,
         parent_id: null,
         messages: [{
           fid: randomUUID(), parentId: null, childrenIds: [], role: "user",
-          content: userPrompt, user_action: "chat", files: [], models: [model],
-          chat_type: "t2t",
+          content: userPrompt, user_action: "chat",
+          files: resolvedFiles,
+          models: [effectiveModel],
+          chat_type: resolvedFiles.length > 0 ? "vl" : "t2t",
           feature_config: { thinking_enabled: false, output_schema: "phase", thinking_budget: 81920 },
-          sub_chat_type: "t2t",
+          sub_chat_type: resolvedFiles.length > 0 ? "vl" : "t2t",
         }],
       }),
     });
@@ -418,7 +516,6 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
     if (stream) {
       startSSE();
 
-      // Tools: must buffer full response to detect tool calls
       if (hasTools) {
         const body = await r2.text();
         const { content, inputTokens, outputTokens } = parseQwenSSE(body);
@@ -465,7 +562,6 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
         return;
       }
 
-      // No tools: true SSE streaming — pipe Qwen SSE → OpenAI SSE
       if (!r2.body) {
         res.write(`data: ${JSON.stringify({ error: "No response body" })}\n\ndata: [DONE]\n\n`);
         res.end();
@@ -518,6 +614,11 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
 
     // ── NON-STREAMING path ───────────────────────────────────────────────────
     const body = await r2.text();
+
+    if (hasImages) {
+      logger.info({ rawSSE: body.slice(0, 1000) }, "vision raw SSE response");
+    }
+
     const { content, inputTokens, outputTokens } = parseQwenSSE(body);
 
     if (!content) {
@@ -534,7 +635,7 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
         id,
         object: "chat.completion",
         created,
-        model,
+        model: effectiveModel,
         system_fingerprint: "fp_qwen_gateway",
         choices: [{
           index: 0,
@@ -555,7 +656,7 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
       id,
       object: "chat.completion",
       created,
-      model,
+      model: effectiveModel,
       system_fingerprint: "fp_qwen_gateway",
       choices: [{
         index: 0,
@@ -589,7 +690,8 @@ router.get("/models", requireApiKey, (_req, res) => {
 // ── GET /v1/models/:model ────────────────────────────────────────────────────
 
 router.get("/models/:model", requireApiKey, (req, res) => {
-  const found = MODELS.find(m => m.id === req.params.model);
+  const resolvedId = resolveModel(req.params.model);
+  const found = MODELS.find(m => m.id === resolvedId || m.id === req.params.model);
   if (!found) {
     res.status(404).json({
       error: {
