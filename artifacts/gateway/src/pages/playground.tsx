@@ -131,14 +131,14 @@ function ModelsBlock({ apiKey }: { apiKey: string }) {
                       <div className="px-4 py-2 border-r border-border">Code</div>
                       <div className="px-4 py-2">Details</div>
                     </div>
-                    <div className="sm:grid sm:grid-cols-[80px_1fr] border-t border-border bg-white">
+                    <div className="sm:grid sm:grid-cols-[80px_1fr] border-t border-border">
                       <div className="px-4 py-3 sm:border-r sm:border-border flex items-center gap-2 border-b border-border sm:border-b-0">
                         <span className={statusCls}>{statusCode ?? "—"}</span>
                       </div>
                       <div className="px-4 py-3 space-y-2">
                         <div className="flex items-center justify-between">
                           <span className="text-xs text-muted-foreground font-medium">
-                            Response body {responseTime !== null && <span className="ml-2 text-primary">{responseTime}ms</span>}
+                            Response body {responseTime !== null && <span className="ml-2 text-foreground/70">{responseTime}ms</span>}
                           </span>
                           <button onClick={() => { navigator.clipboard.writeText(JSON.stringify(response, null, 2)); toast.success("Copied"); }} className="text-xs px-2 py-0.5 border border-border rounded hover:bg-muted transition-colors">Copy</button>
                         </div>
@@ -262,7 +262,7 @@ export default function Playground() {
           <div>
             <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-lg font-bold text-foreground">API Playground</h1>
-              <span className="text-xs px-2 py-0.5 bg-primary/10 text-primary rounded font-medium">OpenAI-compatible</span>
+              <span className="text-xs px-2 py-0.5 bg-muted text-muted-foreground border border-border rounded font-medium">OpenAI-compatible</span>
             </div>
             <p className="text-xs text-muted-foreground mt-0.5 font-mono">{endpoint}</p>
           </div>
@@ -288,10 +288,10 @@ export default function Playground() {
             <div className="border-t border-border">
               {/* API Key warning */}
               {userKeys.length === 0 && (
-                <div className="px-4 py-3 bg-amber-50 border-b border-amber-200 flex items-center gap-2 text-sm text-amber-800">
+                <div className="px-4 py-3 bg-muted border-b border-border flex items-center gap-2 text-sm text-muted-foreground">
                   <Key className="w-4 h-4 shrink-0" />
                   <span>No API keys found. </span>
-                  <Link href="/dashboard" className="font-semibold underline">Create one in Dashboard →</Link>
+                  <Link href="/dashboard" className="font-semibold text-foreground underline">Create one in Dashboard →</Link>
                 </div>
               )}
 
@@ -300,7 +300,7 @@ export default function Playground() {
                 <div>
                   <div className="flex items-center gap-2 mb-3">
                     <h3 className="text-sm font-semibold text-foreground">Authorization</h3>
-                    <span className="text-xs px-1.5 py-0.5 bg-red-50 text-red-600 rounded font-semibold border border-red-200">required</span>
+                    <span className="text-xs px-1.5 py-0.5 bg-muted text-muted-foreground rounded font-semibold border border-border">required</span>
                   </div>
                   <div className="border border-border rounded-lg overflow-hidden">
                     <div className="bg-muted/60 flex flex-col sm:grid sm:grid-cols-[160px_1fr]">
@@ -335,10 +335,10 @@ export default function Playground() {
                   <h3 className="text-sm font-semibold text-foreground mb-3">Request body</h3>
                   <div className="border border-border rounded-lg overflow-hidden divide-y divide-border">
                     {/* model */}
-                    <div className="flex flex-col sm:grid sm:grid-cols-[160px_1fr] bg-white">
-                      <div className="px-4 py-3 sm:border-r border-border border-b sm:border-b-0 bg-muted/20">
+                    <div className="flex flex-col sm:grid sm:grid-cols-[160px_1fr]">
+                      <div className="px-4 py-3 sm:border-r border-border border-b sm:border-b-0 bg-muted/30">
                         <div className="font-mono text-sm font-semibold">model</div>
-                        <div className="text-[11px] text-red-600 font-semibold">* required</div>
+                        <div className="text-[11px] text-muted-foreground font-semibold">* required</div>
                         <div className="text-[11px] text-muted-foreground">string</div>
                       </div>
                       <div className="px-4 py-3 space-y-1.5">
@@ -372,10 +372,10 @@ export default function Playground() {
                     </div>
 
                     {/* messages */}
-                    <div className="flex flex-col sm:grid sm:grid-cols-[160px_1fr] bg-white">
-                      <div className="px-4 py-3 sm:border-r border-border border-b sm:border-b-0 bg-muted/20">
+                    <div className="flex flex-col sm:grid sm:grid-cols-[160px_1fr]">
+                      <div className="px-4 py-3 sm:border-r border-border border-b sm:border-b-0 bg-muted/30">
                         <div className="font-mono text-sm font-semibold">messages</div>
-                        <div className="text-[11px] text-red-600 font-semibold">* required</div>
+                        <div className="text-[11px] text-muted-foreground font-semibold">* required</div>
                         <div className="text-[11px] text-muted-foreground">array[object]</div>
                       </div>
                       <div className="px-4 py-3 space-y-2">
@@ -455,7 +455,7 @@ export default function Playground() {
                     {/* Request URL */}
                     <div>
                       <div className="text-xs text-muted-foreground mb-1.5 font-medium uppercase tracking-wider">Request URL</div>
-                      <div className="bg-gray-950 text-gray-100 rounded-lg px-4 py-2.5 text-xs font-mono break-all">{endpoint}</div>
+                      <div className="bg-muted border border-border text-muted-foreground rounded-lg px-4 py-2.5 text-xs font-mono break-all">{endpoint}</div>
                     </div>
 
                     {/* Server response */}
@@ -471,20 +471,19 @@ export default function Playground() {
                             <div className="px-4 py-2 border-r border-border">Code</div>
                             <div className="px-4 py-2">Details</div>
                           </div>
-                          <div className="sm:grid sm:grid-cols-[80px_1fr] border-t border-border bg-white">
+                          <div className="sm:grid sm:grid-cols-[80px_1fr] border-t border-border">
                             <div className="px-4 py-3 sm:border-r sm:border-border flex items-center gap-2 border-b border-border sm:border-b-0">
                               <span className={statusCls}>{statusCode ?? "—"}</span>
                             </div>
                             <div className="px-4 py-3 space-y-3">
-                              {/* Assistant answer — easy to read */}
                               {assistantContent && (
-                                <div className="bg-green-50 border border-green-200 rounded-lg px-3 py-2.5">
-                                  <div className="text-[11px] font-semibold text-green-800 uppercase tracking-wider mb-1">Assistant reply</div>
-                                  <div className="text-sm text-green-900 whitespace-pre-wrap">{assistantContent}</div>
+                                <div className="bg-muted border border-border rounded-lg px-3 py-2.5">
+                                  <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Assistant reply</div>
+                                  <div className="text-sm text-foreground whitespace-pre-wrap">{assistantContent}</div>
                                 </div>
                               )}
                               <div className="flex items-center justify-between">
-                                <div className="text-xs text-muted-foreground font-medium">Full response body {responseTime !== null && <span className="ml-2 text-primary">{responseTime}ms</span>}</div>
+                                <div className="text-xs text-muted-foreground font-medium">Full response body {responseTime !== null && <span className="ml-2 text-foreground/70">{responseTime}ms</span>}</div>
                                 <button
                                   onClick={() => { navigator.clipboard.writeText(JSON.stringify(response, null, 2)); toast.success("Copied"); }}
                                   className="text-xs px-2 py-0.5 border border-border rounded hover:bg-muted transition-colors"

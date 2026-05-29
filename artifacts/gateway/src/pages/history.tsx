@@ -10,8 +10,7 @@ function MethodBadge({ method }: { method: string }) {
   const cls =
     m === "GET" ? "method-badge-get" :
     m === "POST" ? "method-badge-post" :
-    m === "DELETE" ? "method-badge-delete" :
-    "method-badge-put";
+    m === "DELETE" ? "method-badge-delete" : "method-badge-put";
   return <span className={cls}>{m}</span>;
 }
 
@@ -40,23 +39,15 @@ export default function History() {
   const handleClear = () => {
     if (!confirm("Clear all request history?")) return;
     clearHistory.mutate(undefined, {
-      onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: getGetHistoryQueryKey() });
-        toast.success("History cleared");
-      },
+      onSuccess: () => { queryClient.invalidateQueries({ queryKey: getGetHistoryQueryKey() }); toast.success("History cleared"); },
     });
   };
 
-  const toggle = (id: string) => setExpandedId((prev) => (prev === id ? null : id));
-
-  const copyJson = (data: unknown) => {
-    navigator.clipboard.writeText(JSON.stringify(data, null, 2));
-    toast.success("Copied");
-  };
+  const toggle = (id: string) => setExpandedId(prev => prev === id ? null : id);
+  const copyJson = (data: unknown) => { navigator.clipboard.writeText(JSON.stringify(data, null, 2)); toast.success("Copied"); };
 
   return (
     <div className="flex-1 flex flex-col overflow-auto bg-background">
-      {/* Header */}
       <div className="bg-card border-b border-border px-4 sm:px-6 py-4">
         <div className="flex items-center justify-between gap-3">
           <div>
@@ -67,7 +58,7 @@ export default function History() {
             onClick={handleClear}
             disabled={!history?.length || clearHistory.isPending}
             data-testid="btn-clear-history"
-            className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 border border-destructive/50 text-destructive text-xs sm:text-sm rounded hover:bg-destructive/5 disabled:opacity-40 disabled:cursor-not-allowed transition-colors shrink-0"
+            className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 border border-border text-muted-foreground text-xs sm:text-sm rounded hover:bg-muted hover:text-destructive disabled:opacity-40 disabled:cursor-not-allowed transition-colors shrink-0"
           >
             <Trash2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
             <span className="hidden xs:inline">Clear all</span>
@@ -81,11 +72,11 @@ export default function History() {
         ) : !history || history.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-64 border border-dashed border-border rounded-lg text-muted-foreground">
             <p className="text-sm">No requests yet</p>
-            <p className="text-xs mt-1">Use the API Playground to make your first request</p>
+            <p className="text-xs mt-1 opacity-60">Use the API Playground to make your first request</p>
           </div>
         ) : (
-          <div className="border border-border rounded-lg overflow-hidden bg-card shadow-sm">
-            {/* Desktop table header */}
+          <div className="border border-border rounded-lg overflow-hidden bg-card">
+            {/* Desktop header */}
             <div className="hidden sm:grid sm:grid-cols-[32px_140px_70px_1fr_70px_70px_60px] bg-muted text-xs font-semibold text-muted-foreground uppercase tracking-wider border-b border-border">
               <div className="px-3 py-2.5" />
               <div className="px-3 py-2.5">Timestamp</div>
@@ -106,7 +97,7 @@ export default function History() {
                 <div key={entry.id} className={i > 0 ? "border-t border-border" : ""}>
                   {/* Desktop row */}
                   <div
-                    className="hidden sm:grid sm:grid-cols-[32px_140px_70px_1fr_70px_70px_60px] cursor-pointer hover:bg-muted/40 transition-colors text-sm bg-white"
+                    className="hidden sm:grid sm:grid-cols-[32px_140px_70px_1fr_70px_70px_60px] cursor-pointer hover:bg-muted/40 transition-colors text-sm"
                     onClick={() => toggle(entry.id)}
                     data-testid={`history-row-${entry.id}`}
                   >
@@ -129,15 +120,15 @@ export default function History() {
                       {entry.responseTime}ms
                     </div>
                     <div className="px-3 py-3 flex items-center justify-center">
-                      <span className={`text-xs font-semibold ${entry.success ? "text-green-600" : "text-red-500"}`}>
+                      <span className={`text-xs font-semibold ${entry.success ? "text-foreground" : "text-muted-foreground"}`}>
                         {entry.success ? "OK" : "FAIL"}
                       </span>
                     </div>
                   </div>
 
-                  {/* Mobile row — card style */}
+                  {/* Mobile row */}
                   <div
-                    className="sm:hidden flex items-center gap-3 px-3 py-3 cursor-pointer hover:bg-muted/40 transition-colors bg-white"
+                    className="sm:hidden flex items-center gap-3 px-3 py-3 cursor-pointer hover:bg-muted/40 transition-colors"
                     onClick={() => toggle(entry.id)}
                     data-testid={`history-row-mobile-${entry.id}`}
                   >
@@ -156,17 +147,17 @@ export default function History() {
                     <div className="flex items-center gap-2 shrink-0">
                       <span className={statusCls}>{entry.statusCode || "ERR"}</span>
                       <span className="text-xs text-muted-foreground">{entry.responseTime}ms</span>
-                      <span className={`text-xs font-semibold ${entry.success ? "text-green-600" : "text-red-500"}`}>
+                      <span className={`text-xs font-semibold ${entry.success ? "text-foreground" : "text-muted-foreground"}`}>
                         {entry.success ? "OK" : "FAIL"}
                       </span>
                     </div>
                   </div>
 
-                  {/* Expanded detail — shared between desktop and mobile */}
+                  {/* Expanded detail */}
                   {isExpanded && (
-                    <div className="border-t border-border bg-background/60 p-3 sm:p-5 space-y-4">
+                    <div className="border-t border-border bg-muted/20 p-3 sm:p-5 space-y-4">
                       {entry.error && (
-                        <div className="text-xs text-destructive bg-destructive/5 border border-destructive/20 rounded px-3 py-2">
+                        <div className="text-xs text-destructive bg-destructive/10 border border-destructive/20 rounded px-3 py-2">
                           Error: {entry.error}
                         </div>
                       )}
@@ -174,34 +165,24 @@ export default function History() {
                         <div className="space-y-2">
                           <div className="flex items-center justify-between">
                             <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Request Payload</span>
-                            <button
-                              onClick={() => copyJson(entry.requestPayload)}
-                              data-testid={`btn-copy-request-${entry.id}`}
-                              className="text-xs px-2 py-0.5 border border-border rounded hover:bg-muted transition-colors flex items-center gap-1"
-                            >
+                            <button onClick={() => copyJson(entry.requestPayload)} data-testid={`btn-copy-request-${entry.id}`}
+                              className="text-xs px-2 py-0.5 border border-border rounded hover:bg-muted transition-colors flex items-center gap-1 text-muted-foreground">
                               <Copy className="w-3 h-3" /> Copy
                             </button>
                           </div>
-                          <div
-                            className="code-block max-h-64 overflow-auto text-xs"
-                            dangerouslySetInnerHTML={{ __html: syntaxHighlight(entry.requestPayload ?? "null") }}
-                          />
+                          <div className="code-block max-h-64 overflow-auto text-xs"
+                            dangerouslySetInnerHTML={{ __html: syntaxHighlight(entry.requestPayload ?? "null") }} />
                         </div>
                         <div className="space-y-2">
                           <div className="flex items-center justify-between">
                             <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Response Body</span>
-                            <button
-                              onClick={() => copyJson(entry.responseBody)}
-                              data-testid={`btn-copy-response-${entry.id}`}
-                              className="text-xs px-2 py-0.5 border border-border rounded hover:bg-muted transition-colors flex items-center gap-1"
-                            >
+                            <button onClick={() => copyJson(entry.responseBody)} data-testid={`btn-copy-response-${entry.id}`}
+                              className="text-xs px-2 py-0.5 border border-border rounded hover:bg-muted transition-colors flex items-center gap-1 text-muted-foreground">
                               <Copy className="w-3 h-3" /> Copy
                             </button>
                           </div>
-                          <div
-                            className="code-block max-h-64 overflow-auto text-xs"
-                            dangerouslySetInnerHTML={{ __html: syntaxHighlight(entry.responseBody ?? "null") }}
-                          />
+                          <div className="code-block max-h-64 overflow-auto text-xs"
+                            dangerouslySetInnerHTML={{ __html: syntaxHighlight(entry.responseBody ?? "null") }} />
                         </div>
                       </div>
                     </div>

@@ -54,48 +54,48 @@
 }
 
 :root {
-  --background: 0 0% 97%;
-  --foreground: 220 13% 18%;
-  --border: 220 13% 87%;
-  --input: 220 13% 91%;
-  --ring: 216 80% 52%;
-  --card: 0 0% 100%;
-  --card-foreground: 220 13% 18%;
-  --card-border: 220 13% 87%;
-  --popover: 0 0% 100%;
-  --popover-foreground: 220 13% 18%;
-  --popover-border: 220 13% 87%;
-  --primary: 216 80% 52%;
-  --primary-foreground: 0 0% 100%;
-  --secondary: 220 13% 91%;
-  --secondary-foreground: 220 13% 18%;
-  --muted: 220 13% 93%;
-  --muted-foreground: 220 13% 46%;
-  --accent: 216 80% 95%;
-  --accent-foreground: 216 80% 35%;
-  --destructive: 0 72% 51%;
+  --background: 0 0% 5%;
+  --foreground: 0 0% 92%;
+  --border: 0 0% 13%;
+  --input: 0 0% 9%;
+  --ring: 0 0% 55%;
+  --card: 0 0% 8%;
+  --card-foreground: 0 0% 92%;
+  --card-border: 0 0% 13%;
+  --popover: 0 0% 9%;
+  --popover-foreground: 0 0% 92%;
+  --popover-border: 0 0% 13%;
+  --primary: 0 0% 95%;
+  --primary-foreground: 0 0% 5%;
+  --secondary: 0 0% 12%;
+  --secondary-foreground: 0 0% 85%;
+  --muted: 0 0% 11%;
+  --muted-foreground: 0 0% 48%;
+  --accent: 0 0% 13%;
+  --accent-foreground: 0 0% 85%;
+  --destructive: 0 60% 50%;
   --destructive-foreground: 0 0% 100%;
 
-  --sidebar: 220 13% 95%;
-  --sidebar-foreground: 220 13% 30%;
-  --sidebar-border: 220 13% 87%;
-  --sidebar-primary: 216 80% 52%;
-  --sidebar-primary-foreground: 0 0% 100%;
-  --sidebar-accent: 220 13% 91%;
-  --sidebar-accent-foreground: 220 13% 18%;
-  --sidebar-ring: 216 80% 52%;
+  --sidebar: 0 0% 6%;
+  --sidebar-foreground: 0 0% 72%;
+  --sidebar-border: 0 0% 11%;
+  --sidebar-primary: 0 0% 92%;
+  --sidebar-primary-foreground: 0 0% 5%;
+  --sidebar-accent: 0 0% 11%;
+  --sidebar-accent-foreground: 0 0% 85%;
+  --sidebar-ring: 0 0% 50%;
 
   --app-font-sans: 'Inter', system-ui, sans-serif;
   --app-font-serif: Georgia, serif;
   --app-font-mono: 'JetBrains Mono', 'Fira Code', Menlo, monospace;
   --radius: 0.375rem;
 
-  /* Swagger-style method colors */
-  --method-get: 210 70% 58%;
-  --method-post: 145 60% 42%;
-  --method-delete: 0 72% 51%;
-  --method-put: 35 90% 50%;
-  --method-patch: 280 65% 52%;
+  /* Method colors — muted for dark theme */
+  --method-get: 210 40% 55%;
+  --method-post: 145 35% 45%;
+  --method-delete: 0 50% 50%;
+  --method-put: 35 55% 48%;
+  --method-patch: 280 40% 52%;
 }
 
 @layer base {
