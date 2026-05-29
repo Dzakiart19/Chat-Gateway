@@ -1,4 +1,4 @@
-modules = ["nodejs-20"]
+modules = ["nodejs-20", "web", "bash"]
 [workflows]
 runButton = "Project"
 
@@ -21,7 +21,7 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "PORT=8080 pnpm --filter @workspace/api-server run dev"
+args = "PORT=8080 node --enable-source-maps ./artifacts/api-server/dist/index.mjs"
 waitForPort = 8080
 
 [workflows.workflow.metadata]
@@ -40,12 +40,12 @@ waitForPort = 5000
 outputType = "webview"
 
 [[ports]]
-localPort = 8080
-externalPort = 8080
-
-[[ports]]
 localPort = 5000
 externalPort = 80
+
+[[ports]]
+localPort = 8080
+externalPort = 8080
 
 [agent]
 expertMode = true
