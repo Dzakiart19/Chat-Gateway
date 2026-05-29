@@ -1,10 +1,26 @@
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
-import { Server, Eye, EyeOff, Loader2 } from "lucide-react";
+import { Eye, EyeOff, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { setAuth } from "@/lib/auth";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+const S = {
+  page: { minHeight: "100vh", background: "#08080f", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px 16px", fontFamily: "'Inter',system-ui,sans-serif" } as React.CSSProperties,
+  wrap: { width: "100%", maxWidth: 380 } as React.CSSProperties,
+  logo: { display: "flex", flexDirection: "column" as const, alignItems: "center", marginBottom: 36 },
+  logoMark: { width: 44, height: 44, borderRadius: 12, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 16, fontSize: "1.1rem", fontWeight: 800, color: "#fff" },
+  title: { fontSize: "1.35rem", fontWeight: 700, color: "#fff", margin: 0 },
+  subtitle: { fontSize: "0.83rem", color: "rgba(255,255,255,0.38)", margin: "6px 0 0" },
+  card: { background: "#0f0f1c", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 16, padding: "28px 24px" } as React.CSSProperties,
+  label: { display: "block", fontSize: "0.8rem", fontWeight: 500, color: "rgba(255,255,255,0.55)", marginBottom: 7 },
+  input: { width: "100%", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10, padding: "11px 14px", fontSize: "0.875rem", color: "#fff", outline: "none", boxSizing: "border-box" as const, transition: "border-color 0.15s" },
+  inputFocus: { borderColor: "rgba(255,255,255,0.3)" },
+  btn: { width: "100%", padding: "12px", background: "#fff", color: "#08080f", border: "none", borderRadius: 10, fontSize: "0.875rem", fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, transition: "opacity 0.15s", marginTop: 8 } as React.CSSProperties,
+  footer: { textAlign: "center" as const, marginTop: 20, fontSize: "0.82rem", color: "rgba(255,255,255,0.35)" },
+  link: { color: "rgba(255,255,255,0.7)", fontWeight: 600, textDecoration: "none" },
+};
 
 export default function Login() {
   const [, navigate] = useLocation();
@@ -12,6 +28,7 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [focused, setFocused] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -34,50 +51,51 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center p-4">
-      <div className="w-full max-w-sm">
-        {/* Logo */}
-        <div className="flex flex-col items-center mb-8">
-          <div className="w-12 h-12 rounded-xl bg-primary flex items-center justify-center mb-4 shadow-md">
-            <Server className="w-6 h-6 text-white" />
-          </div>
-          <h1 className="text-2xl font-bold text-foreground">Qwen Gateway</h1>
-          <p className="text-sm text-muted-foreground mt-1">Sign in to your account</p>
+    <div style={S.page}>
+      <div style={S.wrap}>
+        <div style={S.logo}>
+          <div style={S.logoMark}>D</div>
+          <h1 style={S.title}>Dzeck API AI</h1>
+          <p style={S.subtitle}>Sign in to your account</p>
         </div>
 
-        <div className="bg-card border border-border rounded-xl shadow-sm p-6">
-          <form onSubmit={handleSubmit} className="space-y-4">
+        <div style={S.card}>
+          <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 18 }}>
             <div>
-              <label className="block text-sm font-medium text-foreground mb-1.5">Email</label>
+              <label style={S.label}>Email</label>
               <input
                 type="email"
                 value={email}
                 onChange={e => setEmail(e.target.value)}
+                onFocus={() => setFocused("email")}
+                onBlur={() => setFocused(null)}
                 required
                 autoComplete="email"
                 placeholder="you@example.com"
-                className="w-full border border-border rounded-lg px-3 py-2.5 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary transition-colors"
+                style={{ ...S.input, ...(focused === "email" ? S.inputFocus : {}) }}
               />
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-foreground mb-1.5">Password</label>
-              <div className="relative">
+              <label style={S.label}>Password</label>
+              <div style={{ position: "relative" }}>
                 <input
                   type={showPw ? "text" : "password"}
                   value={password}
                   onChange={e => setPassword(e.target.value)}
+                  onFocus={() => setFocused("password")}
+                  onBlur={() => setFocused(null)}
                   required
                   autoComplete="current-password"
                   placeholder="••••••••"
-                  className="w-full border border-border rounded-lg px-3 py-2.5 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary transition-colors pr-10"
+                  style={{ ...S.input, paddingRight: 44, ...(focused === "password" ? S.inputFocus : {}) }}
                 />
                 <button
                   type="button"
                   onClick={() => setShowPw(p => !p)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  style={{ position: "absolute", right: 13, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "rgba(255,255,255,0.3)", padding: 0, display: "flex", alignItems: "center" }}
                 >
-                  {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  {showPw ? <EyeOff size={16} /> : <Eye size={16} />}
                 </button>
               </div>
             </div>
@@ -85,17 +103,21 @@ export default function Login() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-2.5 px-4 bg-primary text-white text-sm font-semibold rounded-lg hover:bg-primary/90 disabled:opacity-60 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
+              style={{ ...S.btn, opacity: loading ? 0.6 : 1, cursor: loading ? "not-allowed" : "pointer" }}
             >
-              {loading && <Loader2 className="w-4 h-4 animate-spin" />}
+              {loading && <Loader2 size={15} style={{ animation: "spin 1s linear infinite" }} />}
               Sign in
             </button>
           </form>
         </div>
 
-        <p className="text-center text-sm text-muted-foreground mt-5">
+        <p style={S.footer}>
           Don't have an account?{" "}
-          <Link href="/register" className="text-primary font-medium hover:underline">Sign up</Link>
+          <Link href="/register" style={S.link}>Sign up</Link>
+        </p>
+
+        <p style={{ ...S.footer, marginTop: 10 }}>
+          <Link href="/" style={{ ...S.link, fontWeight: 400, color: "rgba(255,255,255,0.25)" }}>← Back to home</Link>
         </p>
       </div>
     </div>
