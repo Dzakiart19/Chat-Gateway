@@ -34,7 +34,7 @@ externalPort = 3000
 [userenv]
 
 [userenv.shared]
-MONGODB_DATABASE = "manus"
+MONGODB_DATABASE = "qwen_gateway"
 REDIS_HOST = "redis-14320.c334.asia-southeast2-1.gce.cloud.redislabs.com"
 REDIS_PORT = "14320"
 MONGODB_URI = "mongodb+srv://galerizaki_db_user:wTkfzrqewY5qCxYG@cluster0.vmiek8b.mongodb.net/manus?retryWrites=true&w=majority"
