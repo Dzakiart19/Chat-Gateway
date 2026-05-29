@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Key, Plus, Trash2, Copy, Check, Eye, EyeOff, Loader2, AlertCircle } from "lucide-react";
+import { Key, Plus, Trash2, Copy, Check, Eye, EyeOff, Loader2, AlertCircle, LockKeyhole } from "lucide-react";
 import { toast } from "sonner";
 import { apiFetch, getUser } from "@/lib/auth";
 import { format } from "date-fns";
@@ -70,6 +70,25 @@ function NewKeyBanner({ keyData, onDismiss }: { keyData: NewKeyResult; onDismiss
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function KeyReveal({ fullKey, masked }: { fullKey: string; masked: string }) {
+  const [visible, setVisible] = useState(false);
+  return (
+    <div className="flex items-center gap-1.5 mt-0.5 bg-green-50 border border-green-200 rounded-lg px-2 py-1">
+      <code className="text-xs font-mono text-foreground flex-1 break-all select-all min-w-0">
+        {visible ? fullKey : masked}
+      </code>
+      <button
+        onClick={() => setVisible(p => !p)}
+        className="p-1 text-muted-foreground hover:text-foreground shrink-0"
+        title={visible ? "Sembunyikan key" : "Tampilkan key"}
+      >
+        {visible ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+      </button>
+      <CopyButton text={fullKey} />
     </div>
   );
 }
@@ -253,7 +272,10 @@ const client = new OpenAI({
             </div>
           ) : (
             <div className="divide-y divide-border">
-              {keys.map(k => (
+              {keys.map(k => {
+                const isNew = newKey?.id === k.id;
+                const fullKey = isNew ? newKey!.key : null;
+                return (
                 <div key={k.id} className="flex items-center gap-3 px-4 sm:px-6 py-4 bg-white hover:bg-muted/20 transition-colors">
                   <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
                     <Key className="w-4 h-4 text-primary" />
@@ -261,14 +283,19 @@ const client = new OpenAI({
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-medium text-sm text-foreground">{k.name}</span>
-                      {newKey?.id === k.id && (
+                      {isNew && (
                         <span className="text-xs px-1.5 py-0.5 bg-green-100 text-green-700 rounded font-medium">New</span>
                       )}
                     </div>
-                    <div className="flex items-center gap-2 mt-0.5">
-                      <code className="text-xs font-mono text-muted-foreground">{maskKey(k.prefix, k.suffix)}</code>
-                      <CopyButton text={maskKey(k.prefix, k.suffix)} />
-                    </div>
+                    {fullKey ? (
+                      <KeyReveal fullKey={fullKey} masked={maskKey(k.prefix, k.suffix)} />
+                    ) : (
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <LockKeyhole className="w-3 h-3 text-muted-foreground/50 shrink-0" />
+                        <code className="text-xs font-mono text-muted-foreground">{maskKey(k.prefix, k.suffix)}</code>
+                        <span className="text-[10px] text-muted-foreground/60 italic">— full key hanya tampil sekali saat dibuat</span>
+                      </div>
+                    )}
                     <div className="flex items-center gap-3 mt-1 text-[11px] text-muted-foreground flex-wrap">
                       <span>Created {format(new Date(k.created_at), "MMM d, yyyy")}</span>
                       {k.last_used_at && <span>Last used {format(new Date(k.last_used_at), "MMM d")}</span>}
@@ -284,7 +311,8 @@ const client = new OpenAI({
                     {revoking === k.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
                   </button>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
