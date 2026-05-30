@@ -53,3 +53,6 @@ REDIS_HOST = "redis-14320.c334.asia-southeast2-1.gce.cloud.redislabs.com"
 REDIS_PORT = "14320"
 REDIS_PASSWORD = "dA82OZIdJg62zWqsPJ9sDNvgtpCKbAAs"
 POSTGRES_URL = "postgresql://neondb_owner:npg_WXBcMVP19yEg@ep-dark-haze-a4snvlq6-pooler.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
+
+[nix]
+channel = "stable-25_05"
