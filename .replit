@@ -27,6 +27,14 @@ waitForPort = 5000
 localPort = 5000
 externalPort = 80
 
+[[ports]]
+localPort = 8081
+externalPort = 8081
+
+[[ports]]
+localPort = 24845
+externalPort = 3000
+
 [agent]
 expertMode = true
 stack = "BEST_EFFORT_FALLBACK"
