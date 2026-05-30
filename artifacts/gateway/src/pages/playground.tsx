@@ -7,13 +7,14 @@ import { Link } from "wouter";
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 const WORKING_MODELS = [
-  { id: "qwen3-235b-a22b",  label: "qwen3-235b-a22b  (default)" },
+  { id: "qwen3-235b-a22b",  label: "qwen3-235b-a22b (default)" },
   { id: "qwen3-30b-a3b",    label: "qwen3-30b-a3b" },
   { id: "qwen3-7b",         label: "qwen3-7b" },
   { id: "qwen3-4b",         label: "qwen3-4b" },
   { id: "qwen-plus-latest", label: "qwen-plus-latest" },
   { id: "qwen-max-latest",  label: "qwen-max-latest" },
   { id: "qwen3.7-max",      label: "qwen3.7-max" },
+  { id: "aria",             label: "aria (Opera Aria)" },
 ];
 
 function syntaxHighlight(json: unknown): string {
