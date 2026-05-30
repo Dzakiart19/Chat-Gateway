@@ -49,6 +49,7 @@ externalPort = 8080
 
 [agent]
 expertMode = true
+stack = "BEST_EFFORT_FALLBACK"
 
 [userenv]
 
