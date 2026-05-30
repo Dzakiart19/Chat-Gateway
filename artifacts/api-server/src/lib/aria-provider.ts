@@ -1,43 +1,41 @@
 import { randomBytes } from "crypto";
 import { spawn } from "child_process";
+import { Readable } from "stream";
 import { logger } from "./logger";
 
 const UA_BROWSER = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Mobile Safari/537.36 OPR/89.0.0.0";
-const UA_APP     = "Mozilla 5.0 (Linux; Android 14) com.opera.browser OPR/89.5.4705.84314";
 
 const TOKEN_EP  = "https://oauth2.opera-api.com/oauth2/v1/token/";
 const SIGNUP_EP = "https://auth.opera.com/account/v2/external/anonymous/signup";
 const CHAT_EP   = "https://composer.opera-api.com/api/v1/a-chat";
 
-// ── curl helper (bypasses Node.js network stack, uses system curl) ─────────
+// ── curl helper ─────────────────────────────────────────────────────────────
+
+interface CurlResult {
+  json?: unknown;
+  raw?: string;
+  childProcess?: ReturnType<typeof spawn>;
+}
 
 function curlPost(
   url: string,
   headers: Record<string, string>,
   body: string,
-  options: { stream?: boolean } = {},
-): Promise<{ json?: unknown; raw?: string; childProcess?: ReturnType<typeof spawn> }> {
+  options: { stream?: boolean; timeoutSecs?: number } = {},
+): Promise<CurlResult> {
   return new Promise((resolve, reject) => {
-    const args: string[] = [
-      "-s",
-      "-X", "POST",
-      url,
-      "--max-time", "25",
-    ];
+    const timeout = options.timeoutSecs ?? 25;
+    const args: string[] = ["-s", "-X", "POST", url, "--max-time", String(timeout)];
 
     for (const [k, v] of Object.entries(headers)) {
       args.push("-H", `${k}: ${v}`);
     }
     args.push("--data-binary", body);
-
-    if (options.stream) {
-      args.push("-N"); // no-buffer for streaming
-    }
+    if (options.stream) args.push("-N");
 
     const proc = spawn("curl", args, { stdio: ["ignore", "pipe", "pipe"] });
 
     if (options.stream) {
-      // Return the process so the caller can stream stdout
       resolve({ childProcess: proc });
       return;
     }
@@ -49,20 +47,17 @@ function curlPost(
     proc.on("close", (code) => {
       const raw = Buffer.concat(chunks).toString("utf8");
       if (code !== 0) {
-        const errMsg = Buffer.concat(errChunks).toString("utf8");
-        return reject(new Error(`curl exited ${code}: ${errMsg.slice(0, 200)}`));
+        const msg = Buffer.concat(errChunks).toString("utf8");
+        return reject(new Error(`curl exited ${code}: ${msg.slice(0, 200)}`));
       }
-      try {
-        resolve({ json: JSON.parse(raw), raw });
-      } catch {
-        resolve({ raw });
-      }
+      try { resolve({ json: JSON.parse(raw), raw }); }
+      catch { resolve({ raw }); }
     });
     proc.on("error", reject);
   });
 }
 
-// ── Session management ─────────────────────────────────────────────────────
+// ── Session management with mutex ──────────────────────────────────────────
 
 interface AriaSession {
   accessToken: string;
@@ -71,9 +66,10 @@ interface AriaSession {
 }
 
 let _session: AriaSession | null = null;
+let _sessionLock: Promise<AriaSession> | null = null;  // mutex
 
 async function createSession(): Promise<AriaSession> {
-  // Step 1: anonymous client_credentials
+  // Step 1: anonymous client_credentials token
   const r1 = await curlPost(TOKEN_EP, {
     "Content-Type": "application/x-www-form-urlencoded",
     "User-Agent": UA_BROWSER,
@@ -81,7 +77,7 @@ async function createSession(): Promise<AriaSession> {
   const d1 = r1.json as { access_token?: string };
   if (!d1?.access_token) throw new Error(`Aria step1 failed: ${r1.raw?.slice(0, 200)}`);
 
-  // Step 2: anonymous signup (no User-Agent — causes 503 if set)
+  // Step 2: anonymous signup — NO User-Agent header (causes 503 if set)
   const r2 = await curlPost(SIGNUP_EP, {
     "Authorization": `Bearer ${d1.access_token}`,
     "Accept": "application/json",
@@ -90,7 +86,7 @@ async function createSession(): Promise<AriaSession> {
   const d2 = r2.json as { token?: string };
   if (!d2?.token) throw new Error(`Aria step2 failed: ${r2.raw?.slice(0, 200)}`);
 
-  // Step 3: auth_token → refresh_token
+  // Step 3: exchange auth_token → refresh_token + access_token
   const r3 = await curlPost(TOKEN_EP, {
     "Content-Type": "application/x-www-form-urlencoded",
     "User-Agent": UA_BROWSER,
@@ -101,7 +97,7 @@ async function createSession(): Promise<AriaSession> {
   return {
     accessToken: d3.access_token!,
     refreshToken: d3.refresh_token,
-    expiresAt: Date.now() + ((d3.expires_in ?? 3600) - 60) * 1000,
+    expiresAt: Date.now() + ((d3.expires_in ?? 3600) - 120) * 1000, // 2-min buffer
   };
 }
 
@@ -115,30 +111,56 @@ async function refreshSession(session: AriaSession): Promise<AriaSession> {
   return {
     accessToken: d.access_token,
     refreshToken: session.refreshToken,
-    expiresAt: Date.now() + ((d.expires_in ?? 3600) - 60) * 1000,
+    expiresAt: Date.now() + ((d.expires_in ?? 3600) - 120) * 1000,
   };
 }
 
+/**
+ * Get a valid Aria session. Thread-safe: concurrent callers share one
+ * in-flight createSession/refreshSession promise instead of spawning multiple.
+ */
 async function getSession(): Promise<AriaSession> {
-  if (!_session) {
-    logger.info("Aria: creating new anonymous session");
-    _session = await createSession();
-    return _session;
-  }
-  if (Date.now() >= _session.expiresAt) {
-    logger.info("Aria: refreshing expired session");
+  // Fast path: session is already valid
+  if (_session && Date.now() < _session.expiresAt) return _session;
+
+  // Mutex: if someone is already creating/refreshing, wait for that promise
+  if (_sessionLock) return _sessionLock;
+
+  _sessionLock = (async () => {
     try {
-      _session = await refreshSession(_session);
-    } catch {
-      logger.warn("Aria: refresh failed, creating new session");
-      _session = null;
+      // Re-check after acquiring lock (another caller may have already done it)
+      if (_session && Date.now() < _session.expiresAt) return _session;
+
+      if (_session) {
+        // Expired — try refresh first
+        try {
+          logger.info("Aria: refreshing expired session");
+          _session = await refreshSession(_session);
+          return _session;
+        } catch {
+          logger.warn("Aria: refresh failed, creating new session");
+          _session = null;
+        }
+      }
+
+      logger.info("Aria: creating new anonymous session");
       _session = await createSession();
+      return _session;
+    } finally {
+      _sessionLock = null;
     }
-  }
-  return _session;
+  })();
+
+  return _sessionLock;
 }
 
-// ── Chat helpers ────────────────────────────────────────────────────────────
+/** Force-invalidate session (call on 401 from chat endpoint). */
+function invalidateSession(): void {
+  _session = null;
+  _sessionLock = null;
+}
+
+// ── Chat helpers ─────────────────────────────────────────────────────────────
 
 function buildChatBody(query: string, encKey: string): string {
   return JSON.stringify({
@@ -164,31 +186,36 @@ function chatHeaders(token: string): Record<string, string> {
   };
 }
 
+// ── Public API ────────────────────────────────────────────────────────────────
+
 export interface AriaChatResult {
   content: string;
   inputTokens: number;
   outputTokens: number;
 }
 
-/** Non-streaming: collect full response via curl. */
+/** Non-streaming: collect full response, with automatic 401 retry. */
 export async function ariaChat(query: string): Promise<AriaChatResult> {
-  const session = await getSession();
   const encKey = randomBytes(32).toString("base64");
-  const body = buildChatBody(query, encKey);
 
-  const r = await curlPost(CHAT_EP, chatHeaders(session.accessToken), body);
-  const raw = r.raw ?? "";
+  async function attempt(retried = false): Promise<AriaChatResult> {
+    const session = await getSession();
+    const r = await curlPost(CHAT_EP, chatHeaders(session.accessToken), buildChatBody(query, encKey));
+    const raw = r.raw ?? "";
 
-  // 401 → re-auth and retry
-  if (raw.includes('"error"') && raw.includes("401")) {
-    logger.warn("Aria: possible 401, resetting session");
-    _session = null;
-    const newSession = await getSession();
-    const r2 = await curlPost(CHAT_EP, chatHeaders(newSession.accessToken), body);
-    return parseAriaSSEBody(r2.raw ?? "");
+    const is401 = raw.includes('"error"') &&
+      (raw.includes("401") || raw.toLowerCase().includes("unauthorized") || raw.toLowerCase().includes("invalid_token"));
+
+    if (is401 && !retried) {
+      logger.warn("Aria: 401 on non-streaming, re-authenticating");
+      invalidateSession();
+      return attempt(true);
+    }
+
+    return parseAriaSSEBody(raw);
   }
 
-  return parseAriaSSEBody(raw);
+  return attempt();
 }
 
 function parseAriaSSEBody(raw: string): AriaChatResult {
@@ -206,20 +233,28 @@ function parseAriaSSEBody(raw: string): AriaChatResult {
         inputTokens = j.usage.prompt_tokens ?? 0;
         outputTokens = j.usage.completion_tokens ?? 0;
       }
-    } catch { /* skip */ }
+    } catch { /* ignore malformed lines */ }
   }
   return { content, inputTokens, outputTokens };
 }
 
-/** Streaming: returns a curl child process whose stdout emits raw SSE bytes. */
-export async function ariaChatStream(query: string): Promise<ReturnType<typeof spawn>> {
+/**
+ * Streaming: returns a Readable (proc.stdout) that emits raw SSE bytes from Aria.
+ * Session is validated before spawning curl, so 401 mid-stream is extremely rare.
+ * If it does happen, the caller will receive a partial/empty response — acceptable trade-off
+ * vs. the complexity of buffering + retrying a live stream.
+ */
+export async function ariaChatStream(query: string): Promise<Readable> {
   const session = await getSession();
   const encKey = randomBytes(32).toString("base64");
-  const body = buildChatBody(query, encKey);
-  const r = await curlPost(CHAT_EP, chatHeaders(session.accessToken), body, { stream: true });
-  return r.childProcess!;
+  const { childProcess: proc } = await curlPost(
+    CHAT_EP, chatHeaders(session.accessToken), buildChatBody(query, encKey),
+    { stream: true, timeoutSecs: 90 },
+  );
+  return proc!.stdout! as unknown as Readable;
 }
 
+/** Parse one SSE line from Aria's stream → plain text chunk, or null to skip. */
 export function parseAriaSSELine(line: string): string | null {
   if (!line.startsWith("data: ")) return null;
   const raw = line.slice(6).trim();

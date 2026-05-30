@@ -627,11 +627,11 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
         startSSE();
         res.write(sseChunk({ role: "assistant", content: "" }));
 
-        const proc = await ariaChatStream(query);
+        const ariaStream = await ariaChatStream(query);
         let buf = "";
 
         await new Promise<void>((resolve, reject) => {
-          proc.stdout!.on("data", (chunk: Buffer) => {
+          ariaStream.on("data", (chunk: Buffer) => {
             buf += chunk.toString("utf8");
             const lines = buf.split("\n");
             buf = lines.pop() ?? "";
@@ -640,8 +640,8 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
               if (text) res.write(sseChunk({ content: text }));
             }
           });
-          proc.stdout!.on("end", resolve);
-          proc.on("error", reject);
+          ariaStream.on("end", resolve);
+          ariaStream.on("error", reject);
         });
 
         res.write(sseChunk({}, "stop"));
