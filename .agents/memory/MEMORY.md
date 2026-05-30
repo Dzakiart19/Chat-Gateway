@@ -1,0 +1,1 @@
+- [Opera Aria provider](aria-provider.md) — auth step 2 must have no User-Agent; Node.js fetch/https timeout to opera-api.com, use child_process curl instead.

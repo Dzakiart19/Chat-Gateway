@@ -4,6 +4,7 @@ import { requireApiKey } from "../middleware/requireApiKey";
 import { logger } from "../lib/logger";
 import { recordRequest } from "../lib/stats";
 import { getPooledMidtoken } from "../lib/umid-pool";
+import { ariaChat, ariaChatStream, parseAriaSSELine } from "../lib/aria-provider";
 
 const router = Router();
 
@@ -407,6 +408,8 @@ function messagesToPrompt(messages: Message[], suppressImageNotes = false): stri
 // ── Model registry ───────────────────────────────────────────────────────────
 
 const MODELS = [
+  // Opera Aria — keyless, anonymous auth, powered by OpenAI + Google
+  { id: "aria",                         object: "model", created: 1700000000, owned_by: "opera" },
   // Text + vision models — all available via chat.qwen.ai proxy
   { id: "qwen3.7-max",                 object: "model", created: 1700000000, owned_by: "qwen" },
   { id: "qwen3.6-plus",                object: "model", created: 1700000000, owned_by: "qwen" },
@@ -616,6 +619,70 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
   }
 
   try {
+    // ── ARIA provider path ───────────────────────────────────────────────────
+    if (model === "aria") {
+      const query = messagesToPrompt(effectiveMessages);
+
+      if (stream) {
+        startSSE();
+        res.write(sseChunk({ role: "assistant", content: "" }));
+
+        const proc = await ariaChatStream(query);
+        let buf = "";
+
+        await new Promise<void>((resolve, reject) => {
+          proc.stdout!.on("data", (chunk: Buffer) => {
+            buf += chunk.toString("utf8");
+            const lines = buf.split("\n");
+            buf = lines.pop() ?? "";
+            for (const line of lines) {
+              const text = parseAriaSSELine(line);
+              if (text) res.write(sseChunk({ content: text }));
+            }
+          });
+          proc.stdout!.on("end", resolve);
+          proc.on("error", reject);
+        });
+
+        res.write(sseChunk({}, "stop"));
+        res.write("data: [DONE]\n\n");
+        res.end();
+        return;
+      }
+
+      const { content, inputTokens, outputTokens } = await ariaChat(query);
+      if (!content) {
+        res.status(502).json({
+          error: { message: "No response from Aria", type: "upstream_error", code: "empty_response" },
+        });
+        return;
+      }
+
+      res.json({
+        id,
+        object: "chat.completion",
+        created,
+        model: _rawModel,
+        service_tier: "default",
+        system_fingerprint: "fp_aria_gateway",
+        choices: [{
+          index: 0,
+          message: { role: "assistant", refusal: null, content },
+          logprobs: null,
+          finish_reason: "stop",
+        }],
+        usage: {
+          prompt_tokens: inputTokens,
+          completion_tokens: outputTokens,
+          total_tokens: inputTokens + outputTokens,
+          prompt_tokens_details: { cached_tokens: 0, audio_tokens: 0 },
+          completion_tokens_details: { reasoning_tokens: 0, audio_tokens: 0, accepted_prediction_tokens: 0, rejected_prediction_tokens: 0 },
+        },
+      });
+      return;
+    }
+
+    // ── QWEN provider path ───────────────────────────────────────────────────
     const midtoken = await getMidtoken();
     const headers = qwenHeaders(midtoken);
 
