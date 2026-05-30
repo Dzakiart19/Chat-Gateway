@@ -29,7 +29,7 @@ const FEATURES = [
 const BADGES = [
   { icon: <Zap size={13} />,      label: "Automatic retries" },
   { icon: <Shield size={13} />,   label: "One API key" },
-  { icon: <Layers size={13} />,   label: "8 Qwen models" },
+  { icon: <Layers size={13} />,   label: "Qwen + Aria models" },
   { icon: <Code2 size={13} />,    label: "OpenAI SDK compatible" },
   { icon: <Globe size={13} />,    label: "Streaming support" },
   { icon: <Terminal size={13} />, label: "50 MB payload limit" },
@@ -140,7 +140,7 @@ export default function Landing() {
 
       {/* Announcement bar */}
       <div style={{ background: "rgba(255,255,255,0.03)", borderBottom: `1px solid ${BORDER}`, padding: "8px 16px", textAlign: "center", fontSize: "0.77rem", color: DIM }}>
-        8 Qwen models · OpenAI-compatible · Works with any SDK
+        Qwen + Opera Aria · OpenAI-compatible · Works with any SDK
         <Link href="/register" style={{ marginLeft: 10, color: "rgba(255,255,255,0.65)", fontWeight: 600, textDecoration: "none" }}>Get started →</Link>
       </div>
 
@@ -192,16 +192,16 @@ export default function Landing() {
         <div style={{ position: "relative", maxWidth: 680, margin: "0 auto", padding: "0 20px" }}>
           <div style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "rgba(255,255,255,0.04)", border: `1px solid ${BORDER}`, borderRadius: 99, padding: "6px 16px", marginBottom: 32, fontSize: "0.76rem", color: DIM }}>
             <Cpu size={12} style={{ opacity: 0.5 }} />
-            Now supporting 8 Qwen models · OpenAI-compatible
+            Now supporting Qwen + Opera Aria · OpenAI-compatible
           </div>
 
           <h1 style={{ fontSize: "clamp(2.2rem,6vw,3.8rem)", fontWeight: 800, lineHeight: 1.08, letterSpacing: "-0.03em", marginBottom: 22, color: "#fff" }}>
             One API.{" "}
-            <span style={{ color: "rgba(255,255,255,0.55)" }}>Every Qwen Model.</span>
+            <span style={{ color: "rgba(255,255,255,0.55)" }}>Every AI Model.</span>
           </h1>
 
           <p style={{ fontSize: "1rem", color: DIM, lineHeight: 1.75, maxWidth: 460, margin: "0 auto 40px" }}>
-            One endpoint, all Qwen models. Switch models instantly — no lock-in.
+            One endpoint, all models — Qwen and Opera Aria. Switch instantly, no lock-in.
             Drop-in replacement for any OpenAI-compatible client.
           </p>
 
