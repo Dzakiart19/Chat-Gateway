@@ -15,6 +15,17 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
-app.listen(port, "0.0.0.0", () => {
-  logger.info({ port }, "Server listening");
+process.on("uncaughtException", (err) => {
+  logger.error({ err }, "Uncaught exception — server will continue");
 });
+
+process.on("unhandledRejection", (reason) => {
+  logger.error({ reason }, "Unhandled promise rejection — server will continue");
+});
+
+const server = app.listen(port, "0.0.0.0", () => {
+  logger.info({ port }, "Server listening on 0.0.0.0");
+});
+
+server.keepAliveTimeout = 65_000;
+server.headersTimeout = 66_000;
