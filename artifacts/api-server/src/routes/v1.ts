@@ -377,6 +377,78 @@ async function resolveImageUrls(
   return results.filter((r): r is QwenFileDescriptor => r !== null);
 }
 
+/**
+ * Analyze all images in a message using Qwen vision and return a combined
+ * text description. Used to give vision capability to text-only providers.
+ */
+async function describeImagesWithQwen(
+  imageUrls: string[],
+  userText: string,
+): Promise<string> {
+  try {
+    const midtoken = await getMidtoken();
+    const headers = qwenHeaders(midtoken);
+    const cookie = await getQwenCookies(midtoken);
+    const uploadHeaders = { ...headers, Cookie: cookie };
+
+    const files = await resolveImageUrls(imageUrls, uploadHeaders);
+    if (files.length === 0) return userText;
+
+    const chatId = await createQwenChat(headers, "qwen3.7-max");
+    const prompt = userText
+      ? `${userText}\n\n(Analyze the attached image(s) carefully and answer based on their content.)`
+      : "Describe the attached image(s) in full detail.";
+
+    const r = await fetch(`${QWEN_BASE}/chat/completions?chat_id=${chatId}`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        stream: true, incremental_output: true, chat_id: chatId, chat_mode: "normal",
+        model: "qwen3.7-max",
+        temperature: 0.7,
+        parent_id: null,
+        messages: [{
+          fid: randomUUID(), parentId: null, childrenIds: [], role: "user",
+          content: prompt, user_action: "chat",
+          files,
+          models: ["qwen3.7-max"],
+          chat_type: "t2t",
+          feature_config: { thinking_enabled: false, output_schema: "phase", thinking_budget: 81920 },
+          sub_chat_type: "t2t",
+        }],
+      }),
+    });
+    const body = await r.text();
+    const { content } = parseQwenSSE(body);
+    return content || userText;
+  } catch (err) {
+    logger.warn({ err: String(err) }, "vision-fallback: Qwen describe failed, using text-only");
+    return userText;
+  }
+}
+
+/**
+ * For text-only providers: replace image_url content parts with Qwen-generated
+ * text descriptions so the provider still "sees" the image contextually.
+ */
+async function flattenVisionMessages(messages: Message[]): Promise<Message[]> {
+  const result: Message[] = [];
+  for (const msg of messages) {
+    const images = getMessageImages(msg.content);
+    if (images.length === 0) {
+      result.push({
+        ...msg,
+        content: typeof msg.content === "string" ? msg.content : getMessageText(msg.content),
+      });
+      continue;
+    }
+    const text = getMessageText(msg.content);
+    const described = await describeImagesWithQwen(images, text);
+    result.push({ ...msg, content: described });
+  }
+  return result;
+}
+
 function messagesToPrompt(messages: Message[], suppressImageNotes = false): string {
   return messages.map(m => {
     const text = getMessageText(m.content);
@@ -664,7 +736,8 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
   try {
     // ── ARIA provider path ───────────────────────────────────────────────────
     if (model === "aria") {
-      const query = messagesToPrompt(effectiveMessages);
+      const ariaEffective = hasImages ? await flattenVisionMessages(effectiveMessages) : effectiveMessages;
+      const query = messagesToPrompt(ariaEffective);
 
       if (stream) {
         startSSE();
@@ -744,7 +817,8 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
 
     // ── Yqcloud provider path ────────────────────────────────────────────────
     if (isYqcloudModel(model)) {
-      const yqMessages = effectiveMessages.map(m => ({
+      const yqEffective = hasImages ? await flattenVisionMessages(effectiveMessages) : effectiveMessages;
+      const yqMessages = yqEffective.map(m => ({
         role: m.role,
         content: typeof m.content === "string" ? m.content : getMessageText(m.content),
       }));
@@ -809,7 +883,8 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
     // ── Cohere provider path ─────────────────────────────────────────────────
     if (isCohereModel(model)) {
       const cohereModel = resolveCohereModel(model);
-      const cohereMessages = effectiveMessages.map(m => ({
+      const coEffective = hasImages ? await flattenVisionMessages(effectiveMessages) : effectiveMessages;
+      const cohereMessages = coEffective.map(m => ({
         role: m.role,
         content: typeof m.content === "string" ? m.content : getMessageText(m.content),
       }));
