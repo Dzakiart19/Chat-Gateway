@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { randomUUID, createHmac } from "crypto";
+import { execSync } from "child_process";
 import { requireApiKey } from "../middleware/requireApiKey";
 import { logger } from "../lib/logger";
 import { recordRequest } from "../lib/stats";
@@ -278,7 +279,40 @@ function detectMimeType(url: string): string {
   return "image/jpeg";
 }
 
-/** Fetch image bytes and MIME type from a URL or data URI. */
+/** Fetch image bytes using curl (bypasses hotlink protection, TLS fingerprint issues). */
+function fetchImageBytesViaCurl(url: string): { buf: Buffer; mimeType: string; filename: string } {
+  const result = execSync(
+    `curl -sL --max-time 20 --max-filesize 20971520 \
+      -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36" \
+      -H "Accept: image/avif,image/webp,image/apng,image/*,*/*;q=0.8" \
+      -H "Accept-Language: en-US,en;q=0.9" \
+      -H "Referer: https://www.google.com/" \
+      --tlsv1.2 \
+      -w "\\n__CONTENT_TYPE__:%{content_type}__STATUS__:%{http_code}" \
+      "${url.replace(/"/g, '\\"')}"`,
+    { maxBuffer: 25 * 1024 * 1024, encoding: "buffer" },
+  ) as unknown as Buffer;
+
+  const raw = result.toString("latin1");
+  const metaMatch = raw.match(/\n__CONTENT_TYPE__:([^_]*)__STATUS__:(\d+)$/);
+  if (!metaMatch) throw new Error("curl: failed to parse metadata");
+
+  const status = Number(metaMatch[2]);
+  if (status < 200 || status >= 300) throw new Error(`curl: HTTP ${status} for ${url}`);
+
+  const metaSuffix = `\n__CONTENT_TYPE__:${metaMatch[1]}__STATUS__:${metaMatch[2]}`;
+  const bodyEnd = result.length - Buffer.byteLength(metaSuffix, "latin1");
+  const buf = result.slice(0, bodyEnd);
+
+  const ctRaw = metaMatch[1].split(";")[0].trim();
+  const mimeType = ctRaw.startsWith("image/") ? ctRaw : detectMimeType(url);
+  const ext = mimeType.split("/")[1]?.replace("jpeg", "jpg") || "jpg";
+  const rawName = url.split("/").pop()?.split("?")[0] || `image.${ext}`;
+  const filename = rawName.includes(".") ? rawName : `${rawName}.${ext}`;
+  return { buf, mimeType, filename };
+}
+
+/** Fetch image bytes and MIME type from a URL or data URI. Falls back to curl for hotlink-protected URLs. */
 async function fetchImageBytes(url: string): Promise<{ buf: Buffer; mimeType: string; filename: string }> {
   if (url.startsWith("data:")) {
     const m = url.match(/^data:([^;,]+);base64,(.+)$/);
@@ -288,17 +322,33 @@ async function fetchImageBytes(url: string): Promise<{ buf: Buffer; mimeType: st
     const ext = mimeType.split("/")[1]?.replace("jpeg", "jpg") || "jpg";
     return { buf, mimeType, filename: `image.${ext}` };
   }
-  const res = await fetch(url, {
-    headers: { "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/138.0.0.0 Safari/537.36" },
-  });
-  if (!res.ok) throw new Error(`Image fetch failed: ${res.status} ${url}`);
-  const buf = Buffer.from(await res.arrayBuffer());
-  const ct = res.headers.get("content-type")?.split(";")[0].trim() || detectMimeType(url);
-  const mimeType = ct.startsWith("image/") ? ct : detectMimeType(url);
-  const ext = mimeType.split("/")[1]?.replace("jpeg", "jpg") || "jpg";
-  const rawName = url.split("/").pop()?.split("?")[0] || `image.${ext}`;
-  const filename = rawName.includes(".") ? rawName : `${rawName}.${ext}`;
-  return { buf, mimeType, filename };
+
+  // Try Node.js fetch first
+  try {
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
+        "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+        "Referer": "https://www.google.com/",
+      },
+      signal: AbortSignal.timeout(15000),
+    });
+    if (res.ok) {
+      const buf = Buffer.from(await res.arrayBuffer());
+      const ct = res.headers.get("content-type")?.split(";")[0].trim() || detectMimeType(url);
+      const mimeType = ct.startsWith("image/") ? ct : detectMimeType(url);
+      const ext = mimeType.split("/")[1]?.replace("jpeg", "jpg") || "jpg";
+      const rawName = url.split("/").pop()?.split("?")[0] || `image.${ext}`;
+      const filename = rawName.includes(".") ? rawName : `${rawName}.${ext}`;
+      return { buf, mimeType, filename };
+    }
+    logger.debug({ status: res.status, url: url.slice(0, 80) }, "vision: fetch failed, retrying with curl");
+  } catch (err) {
+    logger.debug({ err: String(err), url: url.slice(0, 80) }, "vision: fetch error, retrying with curl");
+  }
+
+  // Fallback to curl (handles TLS fingerprint, hotlink protection, Cloudflare, etc.)
+  return fetchImageBytesViaCurl(url);
 }
 
 /**
@@ -518,25 +568,50 @@ function applyMaxTokens(
 
 // ── Model registry ───────────────────────────────────────────────────────────
 
-const MODELS = [
+interface ModelEntry {
+  id: string;
+  object: string;
+  created: number;
+  owned_by: string;
+  capabilities?: {
+    vision?: boolean;
+    tools?: boolean;
+    json_mode?: boolean;
+    streaming?: boolean;
+  };
+  context_window?: number;
+}
+
+const MODELS: ModelEntry[] = [
   // Opera Aria — keyless, anonymous auth, powered by OpenAI + Google
-  { id: "aria",                         object: "model", created: 1700000000, owned_by: "opera" },
+  { id: "aria", object: "model", created: 1700000000, owned_by: "opera",
+    capabilities: { vision: false, tools: true, json_mode: false, streaming: true } },
   // Yqcloud — GPT-4 proxy, userId pool rotation
-  ...YQCLOUD_MODELS,
-  // Cohere — command-a/r/r+ via HuggingFace Space, conversation pool
-  ...COHERE_MODELS,
-  // Text + vision models — all available via chat.qwen.ai proxy
-  { id: "qwen3.7-max",                 object: "model", created: 1700000000, owned_by: "qwen" },
-  { id: "qwen3.6-plus",                object: "model", created: 1700000000, owned_by: "qwen" },
-  { id: "qwen3.6-max-preview",         object: "model", created: 1700000000, owned_by: "qwen" },
-  { id: "qwen3-235b-a22b",             object: "model", created: 1700000000, owned_by: "qwen" },
-  { id: "qwen3-30b-a3b",               object: "model", created: 1700000000, owned_by: "qwen" },
-  { id: "qwen-max-latest",             object: "model", created: 1700000000, owned_by: "qwen" },
-  { id: "qwen-turbo-latest",           object: "model", created: 1700000000, owned_by: "qwen" },
-  { id: "qwen2.5-coder-32b-instruct",  object: "model", created: 1700000000, owned_by: "qwen" },
-  // Vision-capable model aliases (all route to text models with vision upload support)
-  { id: "qwen-vl-max-latest",          object: "model", created: 1700000000, owned_by: "qwen" },
-  { id: "qwen2.5-vl-72b-instruct",     object: "model", created: 1700000000, owned_by: "qwen" },
+  ...YQCLOUD_MODELS.map(m => ({ ...m, capabilities: { vision: false, tools: true, json_mode: false, streaming: true } })),
+  // Cohere — command-a/r/r+ via HuggingFace Space
+  ...COHERE_MODELS.map(m => ({ ...m, capabilities: { vision: false, tools: true, json_mode: false, streaming: true } })),
+  // Qwen text + vision models — all support vision via OSS image upload
+  { id: "qwen3.7-max",                 object: "model", created: 1748736000, owned_by: "qwen", context_window: 131072,
+    capabilities: { vision: true, tools: true, json_mode: true, streaming: true } },
+  { id: "qwen3.6-plus",                object: "model", created: 1748736000, owned_by: "qwen", context_window: 131072,
+    capabilities: { vision: true, tools: true, json_mode: true, streaming: true } },
+  { id: "qwen3.6-max-preview",         object: "model", created: 1748736000, owned_by: "qwen", context_window: 131072,
+    capabilities: { vision: true, tools: true, json_mode: true, streaming: true } },
+  { id: "qwen3-235b-a22b",             object: "model", created: 1746489600, owned_by: "qwen", context_window: 131072,
+    capabilities: { vision: true, tools: true, json_mode: true, streaming: true } },
+  { id: "qwen3-30b-a3b",               object: "model", created: 1746489600, owned_by: "qwen", context_window: 131072,
+    capabilities: { vision: true, tools: true, json_mode: true, streaming: true } },
+  { id: "qwen-max-latest",             object: "model", created: 1746489600, owned_by: "qwen", context_window: 32768,
+    capabilities: { vision: true, tools: true, json_mode: true, streaming: true } },
+  { id: "qwen-turbo-latest",           object: "model", created: 1746489600, owned_by: "qwen", context_window: 131072,
+    capabilities: { vision: true, tools: true, json_mode: true, streaming: true } },
+  { id: "qwen2.5-coder-32b-instruct",  object: "model", created: 1730419200, owned_by: "qwen", context_window: 131072,
+    capabilities: { vision: false, tools: true, json_mode: true, streaming: true } },
+  // Dedicated vision model aliases
+  { id: "qwen-vl-max-latest",          object: "model", created: 1748736000, owned_by: "qwen", context_window: 131072,
+    capabilities: { vision: true, tools: true, json_mode: true, streaming: true } },
+  { id: "qwen2.5-vl-72b-instruct",     object: "model", created: 1730419200, owned_by: "qwen", context_window: 131072,
+    capabilities: { vision: true, tools: true, json_mode: true, streaming: true } },
 ];
 
 const MODEL_ALIASES: Record<string, string> = {
@@ -589,9 +664,9 @@ function resolveModel(m: string): string {
   return MODEL_ALIASES[m] ?? m;
 }
 
-/** True if the model natively supports vision input. */
+/** True if the model supports vision input (all Qwen models do via OSS upload). */
 function isVisionModel(model: string): boolean {
-  return model.includes("vl") || model.includes("vision");
+  return model.startsWith("qwen") || model.includes("vl") || model.includes("vision");
 }
 
 // ── POST /v1/chat/completions ────────────────────────────────────────────────
