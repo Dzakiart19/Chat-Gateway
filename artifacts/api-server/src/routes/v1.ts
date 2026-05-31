@@ -681,7 +681,8 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
     tools,
     tool_choice: _toolChoice,
     temperature: _temp,
-    max_tokens: _max,
+    max_tokens: _maxTokens,
+    max_completion_tokens: _maxCompletionTokens,
     stream = false,
     stream_options,
     response_format,
@@ -693,6 +694,10 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
     seed: _seed,
     logprobs: _logprobs,
     top_logprobs: _topLogprobs,
+    parallel_tool_calls: _parallelToolCalls,
+    user: _user,
+    metadata: _metadata,
+    store: _store,
   } = req.body as {
     model?: string;
     messages?: Message[];
@@ -700,9 +705,10 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
     tool_choice?: "none" | "auto" | "required" | { type: string; function?: { name: string } };
     temperature?: number;
     max_tokens?: number;
+    max_completion_tokens?: number;
     stream?: boolean;
     stream_options?: { include_usage?: boolean };
-    response_format?: { type?: "text" | "json_object" };
+    response_format?: { type?: "text" | "json_object" | "json_schema"; json_schema?: unknown };
     stop?: string | string[] | null;
     n?: number;
     top_p?: number;
@@ -711,7 +717,16 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
     seed?: number;
     logprobs?: boolean | null;
     top_logprobs?: number | null;
+    parallel_tool_calls?: boolean;
+    user?: string;
+    metadata?: Record<string, string>;
+    store?: boolean;
   };
+
+  // max_completion_tokens is the newer OpenAI API name for max_tokens — support both
+  const _max = _maxCompletionTokens ?? _maxTokens;
+  // json_schema response format — treat as json_object (best-effort)
+  const effectiveJsonMode = response_format?.type === "json_object" || response_format?.type === "json_schema";
 
   const model = resolveModel(_rawModel);
 
@@ -720,7 +735,7 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
     : 0.7;
 
   const includeUsage = stream_options?.include_usage === true;
-  const jsonMode = response_format?.type === "json_object";
+
 
   res.on("finish", () => {
     recordRequest({
@@ -761,7 +776,7 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
 
   let effectiveMessages = messages;
   if (hasTools) effectiveMessages = injectToolPrompt(effectiveMessages, tools!, _toolChoice);
-  if (jsonMode && !hasTools) effectiveMessages = injectJsonMode(effectiveMessages);
+  if (effectiveJsonMode && !hasTools) effectiveMessages = injectJsonMode(effectiveMessages);
 
   const id = `chatcmpl-${randomUUID().replace(/-/g, "").slice(0, 29)}`;
   const created = Math.floor(Date.now() / 1000);
