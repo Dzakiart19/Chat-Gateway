@@ -7,15 +7,27 @@ import { Link } from "wouter";
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 const WORKING_MODELS = [
-  { id: "qwen3-235b-a22b",  label: "qwen3-235b-a22b (default)" },
-  { id: "qwen3-30b-a3b",    label: "qwen3-30b-a3b" },
-  { id: "qwen3-7b",         label: "qwen3-7b" },
-  { id: "qwen3-4b",         label: "qwen3-4b" },
-  { id: "qwen-plus-latest", label: "qwen-plus-latest" },
-  { id: "qwen-max-latest",  label: "qwen-max-latest" },
-  { id: "qwen3.7-max",      label: "qwen3.7-max" },
-  { id: "aria",             label: "aria (Opera Aria)" },
+  // ── OpenAI (ChatGPT guest mode — needs residential IP or proxy) ──
+  { id: "gpt-4o",            label: "gpt-4o", group: "OpenAI (ChatGPT)" },
+  { id: "gpt-4o-mini",       label: "gpt-4o-mini", group: "OpenAI (ChatGPT)" },
+  { id: "o1",                label: "o1", group: "OpenAI (ChatGPT)" },
+  { id: "o1-mini",           label: "o1-mini", group: "OpenAI (ChatGPT)" },
+  { id: "o3-mini",           label: "o3-mini", group: "OpenAI (ChatGPT)" },
+  { id: "o4-mini",           label: "o4-mini", group: "OpenAI (ChatGPT)" },
+  { id: "chatgpt-4o-latest", label: "chatgpt-4o-latest", group: "OpenAI (ChatGPT)" },
+  // ── Qwen (unlimited via chat.qwen.ai) ──
+  { id: "qwen3-235b-a22b",  label: "qwen3-235b-a22b (default)", group: "Qwen" },
+  { id: "qwen3-30b-a3b",    label: "qwen3-30b-a3b", group: "Qwen" },
+  { id: "qwen3-7b",         label: "qwen3-7b", group: "Qwen" },
+  { id: "qwen3-4b",         label: "qwen3-4b", group: "Qwen" },
+  { id: "qwen-plus-latest", label: "qwen-plus-latest", group: "Qwen" },
+  { id: "qwen-max-latest",  label: "qwen-max-latest", group: "Qwen" },
+  { id: "qwen3.7-max",      label: "qwen3.7-max", group: "Qwen" },
+  // ── Opera Aria (unlimited via anonymous session) ──
+  { id: "aria",             label: "aria (Opera Aria)", group: "Opera" },
 ];
+
+const MODEL_GROUPS = [...new Set(WORKING_MODELS.map(m => m.group))];
 
 function syntaxHighlight(json: unknown): string {
   const str = typeof json === "string" ? json : JSON.stringify(json, null, 2);
@@ -349,7 +361,13 @@ export default function Playground() {
                           onChange={e => setModel(e.target.value)}
                           className="w-full border border-border rounded-lg px-3 py-2 text-sm font-mono bg-background focus:outline-none focus:ring-2 focus:ring-primary/40 transition-colors"
                         >
-                          {WORKING_MODELS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
+                          {MODEL_GROUPS.map(group => (
+                            <optgroup key={group} label={group}>
+                              {WORKING_MODELS.filter(m => m.group === group).map(m => (
+                                <option key={m.id} value={m.id}>{m.label}</option>
+                              ))}
+                            </optgroup>
+                          ))}
                         </select>
                       </div>
                     </div>
