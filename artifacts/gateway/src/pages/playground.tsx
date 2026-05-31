@@ -25,6 +25,9 @@ const WORKING_MODELS = [
   { id: "command-r-plus",   label: "command-r-plus", group: "Cohere" },
   { id: "command-r",        label: "command-r", group: "Cohere" },
   { id: "command-r7b",      label: "command-r7b", group: "Cohere" },
+  // ── GPTFree (Firebase anonymous auth, no account needed) ──
+  { id: "gptfree",          label: "gptfree (default)", group: "GPTFree" },
+  { id: "gptfree-pro",      label: "gptfree-pro", group: "GPTFree" },
 ];
 
 const MODEL_GROUPS = [...new Set(WORKING_MODELS.map(m => m.group))];
