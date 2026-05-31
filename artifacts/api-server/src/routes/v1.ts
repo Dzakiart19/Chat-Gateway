@@ -714,12 +714,39 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
       }
       void gptMessages;
 
+      // ── Helper: call ChatGPT and get full text (streaming internally, buffer here)
+      const callChatGPTBuffered = async (): Promise<string> => {
+        if (hasTools) {
+          // When tools are active, use non-streaming to get clean full response
+          const { content } = await chatGPTChat(chatGPTMessages, model);
+          return content;
+        }
+        // Buffer stream for tool detection
+        const { stream: s } = await chatGPTChatStream(chatGPTMessages, model);
+        return new Promise<string>((resolve, reject) => {
+          let buf = "";
+          let lastText = "";
+          s.on("data", (chunk: Buffer) => {
+            buf += chunk.toString("utf8");
+            const lines = buf.split("\n");
+            buf = lines.pop() ?? "";
+            for (const line of lines) {
+              if (!line.startsWith("data: ")) continue;
+              const raw = line.slice(6).trim();
+              if (raw === "[DONE]") return;
+              try {
+                const j = JSON.parse(raw) as { v?: string };
+                if (typeof j.v === "string") lastText = j.v;
+              } catch { /* skip */ }
+            }
+          });
+          s.on("end", () => resolve(lastText));
+          s.on("error", reject);
+        });
+      };
+
       if (stream) {
         startSSE();
-        res.write(sseChunk({ role: "assistant", content: "" }));
-
-        let lastText = "";
-        let totalOutput = 0;
 
         let gptStream: import("stream").Readable;
         let gptModel: string;
@@ -736,7 +763,63 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
           res.end();
           return;
         }
+
+        // When tools present: buffer full response first, then emit tool_calls SSE
+        if (hasTools) {
+          let buf = "";
+          let lastText = "";
+          await new Promise<void>((resolve, reject) => {
+            gptStream.on("data", (chunk: Buffer) => {
+              buf += chunk.toString("utf8");
+              const lines = buf.split("\n");
+              buf = lines.pop() ?? "";
+              for (const line of lines) {
+                if (!line.startsWith("data: ")) continue;
+                const raw = line.slice(6).trim();
+                if (raw === "[DONE]") { resolve(); return; }
+                try {
+                  const j = JSON.parse(raw) as { v?: string };
+                  if (typeof j.v === "string") lastText = j.v;
+                } catch { /* skip */ }
+              }
+            });
+            gptStream.on("end", resolve);
+            gptStream.on("error", reject);
+          });
+
+          const toolCalls = detectToolCalls(lastText);
+          if (toolCalls) {
+            res.write(sseChunk({ role: "assistant", content: null }));
+            for (let i = 0; i < toolCalls.length; i++) {
+              const tc = toolCalls[i];
+              res.write(sseChunk({ tool_calls: [{ index: i, id: tc.id, type: "function", function: { name: tc.function.name, arguments: "" } }] }));
+              const args = tc.function.arguments;
+              const chunkSize = 20;
+              for (let j = 0; j < args.length; j += chunkSize) {
+                res.write(sseChunk({ tool_calls: [{ index: i, function: { arguments: args.slice(j, j + chunkSize) } }] }));
+              }
+            }
+            res.write(sseChunk({}, "tool_calls"));
+          } else {
+            res.write(sseChunk({ role: "assistant", content: "" }));
+            const words = lastText.split(/(\s+)/);
+            for (const word of words) {
+              if (word) res.write(sseChunk({ content: word }));
+            }
+            res.write(sseChunk({}, "stop"));
+          }
+          if (includeUsage) res.write(sseUsageChunk(0, lastText.length));
+          res.write("data: [DONE]\n\n");
+          res.end();
+          void gptModel;
+          return;
+        }
+
+        // Normal streaming (no tools)
+        res.write(sseChunk({ role: "assistant", content: "" }));
         let buf = "";
+        let lastText = "";
+        let totalOutput = 0;
 
         await new Promise<void>((resolve, reject) => {
           gptStream.on("data", (chunk: Buffer) => {
@@ -749,12 +832,7 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
               if (raw === "[DONE]") { resolve(); return; }
               try {
                 const j = JSON.parse(raw) as { error?: string; v?: string };
-                if (j.error) {
-                  logger.warn({ err: j.error }, "ChatGPT stream error event");
-                  resolve();
-                  return;
-                }
-                // v-encoded streaming: delta from last text
+                if (j.error) { logger.warn({ err: j.error }, "ChatGPT stream error event"); resolve(); return; }
                 if (typeof j.v === "string") {
                   const delta = j.v.length > lastText.length ? j.v.slice(lastText.length) : "";
                   lastText = j.v;
@@ -801,6 +879,30 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
         });
         return;
       }
+      void callChatGPTBuffered; // referenced above but not used in non-streaming path
+
+      // Detect tool calls in response
+      const gptToolCalls = hasTools ? detectToolCalls(gptContent) : null;
+      if (gptToolCalls) {
+        res.json({
+          id,
+          object: "chat.completion",
+          created,
+          model: _rawModel,
+          service_tier: "default",
+          system_fingerprint: "fp_chatgpt_gateway",
+          choices: [{
+            index: 0,
+            message: { role: "assistant", refusal: null, content: null, tool_calls: gptToolCalls },
+            logprobs: null,
+            finish_reason: "tool_calls",
+          }],
+          usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+        });
+        void gptModel;
+        return;
+      }
+
       res.json({
         id,
         object: "chat.completion",
