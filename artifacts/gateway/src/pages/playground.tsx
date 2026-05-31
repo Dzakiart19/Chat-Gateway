@@ -7,14 +7,6 @@ import { Link } from "wouter";
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 const WORKING_MODELS = [
-  // ── OpenAI (ChatGPT guest mode — needs residential IP or proxy) ──
-  { id: "gpt-4o",            label: "gpt-4o", group: "OpenAI (ChatGPT)" },
-  { id: "gpt-4o-mini",       label: "gpt-4o-mini", group: "OpenAI (ChatGPT)" },
-  { id: "o1",                label: "o1", group: "OpenAI (ChatGPT)" },
-  { id: "o1-mini",           label: "o1-mini", group: "OpenAI (ChatGPT)" },
-  { id: "o3-mini",           label: "o3-mini", group: "OpenAI (ChatGPT)" },
-  { id: "o4-mini",           label: "o4-mini", group: "OpenAI (ChatGPT)" },
-  { id: "chatgpt-4o-latest", label: "chatgpt-4o-latest", group: "OpenAI (ChatGPT)" },
   // ── Qwen (unlimited via chat.qwen.ai) ──
   { id: "qwen3-235b-a22b",  label: "qwen3-235b-a22b (default)", group: "Qwen" },
   { id: "qwen3-30b-a3b",    label: "qwen3-30b-a3b", group: "Qwen" },
@@ -25,6 +17,14 @@ const WORKING_MODELS = [
   { id: "qwen3.7-max",      label: "qwen3.7-max", group: "Qwen" },
   // ── Opera Aria (unlimited via anonymous session) ──
   { id: "aria",             label: "aria (Opera Aria)", group: "Opera" },
+  // ── Yqcloud (GPT-4 proxy, userId pool) ──
+  { id: "yqcloud",          label: "yqcloud (GPT-4)", group: "Yqcloud" },
+  { id: "yqcloud-gpt4",     label: "yqcloud-gpt4", group: "Yqcloud" },
+  // ── Cohere (command-a/r via HuggingFace, conv pool) ──
+  { id: "command-a",        label: "command-a (latest)", group: "Cohere" },
+  { id: "command-r-plus",   label: "command-r-plus", group: "Cohere" },
+  { id: "command-r",        label: "command-r", group: "Cohere" },
+  { id: "command-r7b",      label: "command-r7b", group: "Cohere" },
 ];
 
 const MODEL_GROUPS = [...new Set(WORKING_MODELS.map(m => m.group))];
