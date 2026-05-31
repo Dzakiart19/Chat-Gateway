@@ -1,2 +1,3 @@
 - [Opera Aria provider](aria-provider.md) — auth step 2 must have no User-Agent; Node.js fetch/https timeout to opera-api.com, use child_process curl instead.
 - [ChatGPT guest mode recon](chatgpt-recon.md) — sentinel 200 OK from datacenter, conversation 403 IP block; full provider implemented with PoW solver + Python curl_cffi subprocess.
+- [Perplexity provider](perplexity-provider.md) — guest API works via /rest/sse/perplexity_ask, only "turbo"/"default" model_preference work without auth; IP rate limit ~15-20 req/day, resets 00:00 UTC.

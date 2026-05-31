@@ -8,6 +8,7 @@ import { getPooledMidtoken } from "../lib/umid-pool";
 import { ariaChat, ariaChatStream, parseAriaSSELine } from "../lib/aria-provider";
 import { yqcloudChat, yqcloudChatStream, isYqcloudModel, YQCLOUD_MODELS } from "../lib/yqcloud-provider";
 import { cohereChat, cohereStream, isCohereModel, resolveCohereModel, COHERE_MODELS } from "../lib/cohere-provider";
+import { perplexityChat, perplexityStream, isPerplexityModel, PERPLEXITY_MODELS } from "../lib/perplexity-provider";
 
 const router = Router();
 
@@ -590,6 +591,8 @@ const MODELS: ModelEntry[] = [
   ...YQCLOUD_MODELS.map(m => ({ ...m, capabilities: { vision: false, tools: true, json_mode: false, streaming: true } })),
   // Cohere — command-a/r/r+ via HuggingFace Space
   ...COHERE_MODELS.map(m => ({ ...m, capabilities: { vision: false, tools: true, json_mode: false, streaming: true } })),
+  // Perplexity — web search + AI, no auth, IP-based rate limit
+  ...PERPLEXITY_MODELS.map(m => ({ ...m, capabilities: { vision: false, tools: true, json_mode: false, streaming: true }, context_window: 127072 })),
   // Qwen text + vision models — all support vision via OSS image upload
   { id: "qwen3.7-max",                 object: "model", created: 1748736000, owned_by: "qwen", context_window: 131072,
     capabilities: { vision: true, tools: true, json_mode: true, streaming: true } },
@@ -1031,6 +1034,67 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
       res.json({ id, object: "chat.completion", created, model: _rawModel, service_tier: "default", system_fingerprint: "fp_cohere_gateway",
         choices: [{ index: 0, message: { role: "assistant", refusal: null, content: coContent }, logprobs: null, finish_reason: coFinish }],
         usage: { prompt_tokens: coPromptTokens, completion_tokens: coCompTokens, total_tokens: coPromptTokens + coCompTokens } });
+      return;
+    }
+
+    // ── Perplexity provider path ─────────────────────────────────────────────
+    if (isPerplexityModel(model)) {
+      const pplxEffective = hasImages ? await flattenVisionMessages(effectiveMessages) : effectiveMessages;
+      const pplxMessages = pplxEffective.map(m => ({
+        role: m.role,
+        content: typeof m.content === "string" ? m.content : getMessageText(m.content),
+      }));
+
+      if (stream) {
+        startSSE();
+        res.write(sseChunk({ role: "assistant", content: "" }));
+        const pplxMaxChars = _max ? _max * 4 : Infinity;
+        let pplxCharCount = 0;
+        let pplxLengthStop = false;
+        try {
+          for await (const token of perplexityStream(pplxMessages, model)) {
+            if (!token || pplxLengthStop) continue;
+            let t = token;
+            if (pplxCharCount + t.length > pplxMaxChars) {
+              t = t.slice(0, pplxMaxChars - pplxCharCount);
+              pplxLengthStop = true;
+            }
+            pplxCharCount += t.length;
+            if (t) res.write(sseChunk({ content: t }));
+          }
+        } catch (err: unknown) {
+          logger.warn({ err }, "perplexity: stream error");
+        }
+        const pplxStreamFinish = pplxLengthStop ? "length" : "stop";
+        if (includeUsage) {
+          const pplxPromptEst = estimateTokens(messagesToPrompt(pplxMessages));
+          res.write(sseUsageChunk(pplxPromptEst, Math.round(pplxCharCount / 4)));
+        }
+        res.write(sseChunk({}, pplxStreamFinish));
+        res.write("data: [DONE]\n\n");
+        res.end();
+        return;
+      }
+
+      const { content: pplxRaw, inputTokens: pplxIn, outputTokens: pplxOut } = await perplexityChat(pplxMessages, model);
+      if (!pplxRaw) {
+        res.status(502).json({ error: { message: "No response from Perplexity", type: "upstream_error", code: "empty_response" } });
+        return;
+      }
+      const pplxMt = applyMaxTokens(pplxRaw, _max);
+      const pplxSt = applyStop(pplxMt.content, _stop);
+      const pplxContent = pplxSt.content;
+      const pplxFinish = (pplxMt.truncated || pplxSt.truncated) ? "length" : "stop";
+      const toolCalls = hasTools ? detectToolCalls(pplxContent) : null;
+      if (toolCalls) {
+        res.json({ id, object: "chat.completion", created, model: _rawModel, service_tier: "default", system_fingerprint: "fp_perplexity_gateway",
+          choices: [{ index: 0, message: { role: "assistant", refusal: null, content: null, tool_calls: toolCalls }, logprobs: null, finish_reason: "tool_calls" }],
+          usage: { prompt_tokens: pplxIn, completion_tokens: pplxOut, total_tokens: pplxIn + pplxOut } });
+        return;
+      }
+      res.json({ id, object: "chat.completion", created, model: _rawModel, service_tier: "default", system_fingerprint: "fp_perplexity_gateway",
+        choices: [{ index: 0, message: { role: "assistant", refusal: null, content: pplxContent }, logprobs: null, finish_reason: pplxFinish }],
+        usage: { prompt_tokens: pplxIn, completion_tokens: pplxOut, total_tokens: pplxIn + pplxOut } });
       return;
     }
 
