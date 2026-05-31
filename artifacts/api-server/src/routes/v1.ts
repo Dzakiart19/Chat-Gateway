@@ -407,6 +407,43 @@ function messagesToPrompt(messages: Message[], suppressImageNotes = false): stri
   }).join("\n");
 }
 
+// ── Parameter helpers ────────────────────────────────────────────────────────
+
+/** Rough token estimate: ~4 chars per token */
+function estimateTokens(text: string): number {
+  return Math.max(1, Math.round(text.length / 4));
+}
+
+/** Truncate content at the first matching stop sequence. */
+function applyStop(
+  content: string,
+  stop: string | string[] | null | undefined,
+): { content: string; truncated: boolean } {
+  if (!stop) return { content, truncated: false };
+  const stops = Array.isArray(stop) ? stop : [stop];
+  let earliest = content.length;
+  for (const s of stops) {
+    if (!s) continue;
+    const idx = content.indexOf(s);
+    if (idx !== -1 && idx < earliest) earliest = idx;
+  }
+  return earliest < content.length
+    ? { content: content.slice(0, earliest), truncated: true }
+    : { content, truncated: false };
+}
+
+/** Truncate content to approximate max_tokens (4 chars/token). */
+function applyMaxTokens(
+  content: string,
+  maxTokens: number | null | undefined,
+): { content: string; truncated: boolean } {
+  if (!maxTokens || maxTokens <= 0) return { content, truncated: false };
+  const maxChars = maxTokens * 4;
+  return content.length > maxChars
+    ? { content: content.slice(0, maxChars), truncated: true }
+    : { content, truncated: false };
+}
+
 // ── Model registry ───────────────────────────────────────────────────────────
 
 const MODELS = [
@@ -634,15 +671,26 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
         res.write(sseChunk({ role: "assistant", content: "" }));
 
         const ariaStream = await ariaChatStream(query);
+        const ariaMaxChars = _max ? _max * 4 : Infinity;
+        let ariaCharCount = 0;
+        let ariaLengthStop = false;
         let buf = "";
 
         await new Promise<void>((resolve, reject) => {
           ariaStream.on("data", (chunk: Buffer) => {
+            if (ariaLengthStop) return;
             buf += chunk.toString("utf8");
             const lines = buf.split("\n");
             buf = lines.pop() ?? "";
             for (const line of lines) {
-              const text = parseAriaSSELine(line);
+              if (ariaLengthStop) break;
+              let text = parseAriaSSELine(line);
+              if (!text) continue;
+              if (ariaCharCount + text.length > ariaMaxChars) {
+                text = text.slice(0, ariaMaxChars - ariaCharCount);
+                ariaLengthStop = true;
+              }
+              ariaCharCount += text.length;
               if (text) res.write(sseChunk({ content: text }));
             }
           });
@@ -650,19 +698,25 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
           ariaStream.on("error", reject);
         });
 
-        res.write(sseChunk({}, "stop"));
+        const ariaFinishReason = ariaLengthStop ? "length" : "stop";
+        if (includeUsage) res.write(sseUsageChunk(estimateTokens(query), Math.round(ariaCharCount / 4)));
+        res.write(sseChunk({}, ariaFinishReason));
         res.write("data: [DONE]\n\n");
         res.end();
         return;
       }
 
-      const { content, inputTokens, outputTokens } = await ariaChat(query);
-      if (!content) {
+      const { content: ariaRaw, inputTokens, outputTokens } = await ariaChat(query);
+      if (!ariaRaw) {
         res.status(502).json({
           error: { message: "No response from Aria", type: "upstream_error", code: "empty_response" },
         });
         return;
       }
+      const ariaMt = applyMaxTokens(ariaRaw, _max);
+      const ariaSt = applyStop(ariaMt.content, _stop);
+      const ariaContent = ariaSt.content;
+      const ariaFinalFinish = (ariaMt.truncated || ariaSt.truncated) ? "length" : "stop";
 
       res.json({
         id,
@@ -673,9 +727,9 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
         system_fingerprint: "fp_aria_gateway",
         choices: [{
           index: 0,
-          message: { role: "assistant", refusal: null, content },
+          message: { role: "assistant", refusal: null, content: ariaContent },
           logprobs: null,
-          finish_reason: "stop",
+          finish_reason: ariaFinalFinish,
         }],
         usage: {
           prompt_tokens: inputTokens,
@@ -699,35 +753,56 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
         startSSE();
         res.write(sseChunk({ role: "assistant", content: "" }));
         const yqStream = await yqcloudChatStream(yqMessages);
+        const yqMaxChars = _max ? _max * 4 : Infinity;
+        let yqCharCount = 0;
+        let yqLengthStop = false;
         await new Promise<void>((resolve, reject) => {
           yqStream.on("data", (chunk: Buffer) => {
-            const text = chunk.toString();
+            if (yqLengthStop) return;
+            let text = chunk.toString();
+            if (!text) return;
+            if (yqCharCount + text.length > yqMaxChars) {
+              text = text.slice(0, yqMaxChars - yqCharCount);
+              yqLengthStop = true;
+            }
+            yqCharCount += text.length;
             if (text) res.write(sseChunk({ content: text }));
           });
           yqStream.on("end", resolve);
           yqStream.on("error", reject);
         });
-        res.write(sseChunk({}, "stop"));
+        const yqStreamFinish = yqLengthStop ? "length" : "stop";
+        if (includeUsage) {
+          const yqPromptEst = estimateTokens(messagesToPrompt(yqMessages));
+          res.write(sseUsageChunk(yqPromptEst, Math.round(yqCharCount / 4)));
+        }
+        res.write(sseChunk({}, yqStreamFinish));
         res.write("data: [DONE]\n\n");
         res.end();
         return;
       }
 
-      const { content } = await yqcloudChat(yqMessages);
-      if (!content) {
+      const { content: yqRaw } = await yqcloudChat(yqMessages);
+      if (!yqRaw) {
         res.status(502).json({ error: { message: "No response from Yqcloud", type: "upstream_error", code: "empty_response" } });
         return;
       }
-      const toolCalls = hasTools ? detectToolCalls(content) : null;
+      const yqMt = applyMaxTokens(yqRaw, _max);
+      const yqSt = applyStop(yqMt.content, _stop);
+      const yqContent = yqSt.content;
+      const yqFinish = (yqMt.truncated || yqSt.truncated) ? "length" : "stop";
+      const yqPromptTokens = estimateTokens(messagesToPrompt(yqMessages));
+      const yqCompTokens = estimateTokens(yqContent);
+      const toolCalls = hasTools ? detectToolCalls(yqContent) : null;
       if (toolCalls) {
         res.json({ id, object: "chat.completion", created, model: _rawModel, service_tier: "default", system_fingerprint: "fp_yqcloud_gateway",
           choices: [{ index: 0, message: { role: "assistant", refusal: null, content: null, tool_calls: toolCalls }, logprobs: null, finish_reason: "tool_calls" }],
-          usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 } });
+          usage: { prompt_tokens: yqPromptTokens, completion_tokens: yqCompTokens, total_tokens: yqPromptTokens + yqCompTokens } });
         return;
       }
       res.json({ id, object: "chat.completion", created, model: _rawModel, service_tier: "default", system_fingerprint: "fp_yqcloud_gateway",
-        choices: [{ index: 0, message: { role: "assistant", refusal: null, content }, logprobs: null, finish_reason: "stop" }],
-        usage: { prompt_tokens: 0, completion_tokens: content.length, total_tokens: content.length } });
+        choices: [{ index: 0, message: { role: "assistant", refusal: null, content: yqContent }, logprobs: null, finish_reason: yqFinish }],
+        usage: { prompt_tokens: yqPromptTokens, completion_tokens: yqCompTokens, total_tokens: yqPromptTokens + yqCompTokens } });
       return;
     }
 
@@ -742,34 +817,55 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
       if (stream) {
         startSSE();
         res.write(sseChunk({ role: "assistant", content: "" }));
+        const coMaxChars = _max ? _max * 4 : Infinity;
+        let coCharCount = 0;
+        let coLengthStop = false;
         try {
           for await (const token of cohereStream(cohereMessages, cohereModel)) {
-            if (token) res.write(sseChunk({ content: token }));
+            if (!token || coLengthStop) continue;
+            let t = token;
+            if (coCharCount + t.length > coMaxChars) {
+              t = t.slice(0, coMaxChars - coCharCount);
+              coLengthStop = true;
+            }
+            coCharCount += t.length;
+            if (t) res.write(sseChunk({ content: t }));
           }
         } catch (err: unknown) {
           logger.warn({ err }, "cohere: stream error");
         }
-        res.write(sseChunk({}, "stop"));
+        const coStreamFinish = coLengthStop ? "length" : "stop";
+        if (includeUsage) {
+          const coPromptEst = estimateTokens(messagesToPrompt(cohereMessages));
+          res.write(sseUsageChunk(coPromptEst, Math.round(coCharCount / 4)));
+        }
+        res.write(sseChunk({}, coStreamFinish));
         res.write("data: [DONE]\n\n");
         res.end();
         return;
       }
 
-      const { content } = await cohereChat(cohereMessages, cohereModel);
-      if (!content) {
+      const { content: coRaw } = await cohereChat(cohereMessages, cohereModel);
+      if (!coRaw) {
         res.status(502).json({ error: { message: "No response from Cohere", type: "upstream_error", code: "empty_response" } });
         return;
       }
-      const toolCalls = hasTools ? detectToolCalls(content) : null;
+      const coMt = applyMaxTokens(coRaw, _max);
+      const coSt = applyStop(coMt.content, _stop);
+      const coContent = coSt.content;
+      const coFinish = (coMt.truncated || coSt.truncated) ? "length" : "stop";
+      const coPromptTokens = estimateTokens(messagesToPrompt(cohereMessages));
+      const coCompTokens = estimateTokens(coContent);
+      const toolCalls = hasTools ? detectToolCalls(coContent) : null;
       if (toolCalls) {
         res.json({ id, object: "chat.completion", created, model: _rawModel, service_tier: "default", system_fingerprint: "fp_cohere_gateway",
           choices: [{ index: 0, message: { role: "assistant", refusal: null, content: null, tool_calls: toolCalls }, logprobs: null, finish_reason: "tool_calls" }],
-          usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 } });
+          usage: { prompt_tokens: coPromptTokens, completion_tokens: coCompTokens, total_tokens: coPromptTokens + coCompTokens } });
         return;
       }
       res.json({ id, object: "chat.completion", created, model: _rawModel, service_tier: "default", system_fingerprint: "fp_cohere_gateway",
-        choices: [{ index: 0, message: { role: "assistant", refusal: null, content }, logprobs: null, finish_reason: "stop" }],
-        usage: { prompt_tokens: 0, completion_tokens: content.length, total_tokens: content.length } });
+        choices: [{ index: 0, message: { role: "assistant", refusal: null, content: coContent }, logprobs: null, finish_reason: coFinish }],
+        usage: { prompt_tokens: coPromptTokens, completion_tokens: coCompTokens, total_tokens: coPromptTokens + coCompTokens } });
       return;
     }
 
@@ -797,6 +893,8 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
         stream: true, incremental_output: true, chat_id: chatId, chat_mode: "normal",
         model: effectiveModel,
         temperature,
+        ...(typeof _max === "number" && _max > 0 ? { max_output_tokens: _max } : {}),
+        ...(typeof _topP === "number" ? { top_p: Math.max(0, Math.min(1, _topP)) } : {}),
         parent_id: null,
         messages: [{
           fid: randomUUID(), parentId: null, childrenIds: [], role: "user",
@@ -913,14 +1011,19 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
     // ── NON-STREAMING path ───────────────────────────────────────────────────
     const body = await r2.text();
 
-    const { content, inputTokens, outputTokens } = parseQwenSSE(body);
+    const { content: qwenRaw, inputTokens, outputTokens } = parseQwenSSE(body);
 
-    if (!content) {
+    if (!qwenRaw) {
       res.status(502).json({
         error: { message: "No response from model", type: "upstream_error", code: "empty_response" },
       });
       return;
     }
+
+    // Apply stop sequences post-processing (max_tokens handled by Qwen natively)
+    const qwenSt = applyStop(qwenRaw, _stop);
+    const content = qwenSt.content;
+    const qwenFinish = qwenSt.truncated ? "length" : "stop";
 
     const toolCalls = hasTools ? detectToolCalls(content) : null;
 
@@ -962,7 +1065,7 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
         index: 0,
         message: { role: "assistant", refusal: null, content },
         logprobs: null,
-        finish_reason: "stop",
+        finish_reason: qwenFinish,
       }],
       usage: usageBlock,
     });
