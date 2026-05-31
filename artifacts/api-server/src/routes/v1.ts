@@ -5,6 +5,8 @@ import { logger } from "../lib/logger";
 import { recordRequest } from "../lib/stats";
 import { getPooledMidtoken } from "../lib/umid-pool";
 import { ariaChat, ariaChatStream, parseAriaSSELine } from "../lib/aria-provider";
+import { yqcloudChat, yqcloudChatStream, isYqcloudModel, YQCLOUD_MODELS } from "../lib/yqcloud-provider";
+import { cohereChat, cohereStream, isCohereModel, resolveCohereModel, COHERE_MODELS } from "../lib/cohere-provider";
 
 const router = Router();
 
@@ -410,6 +412,10 @@ function messagesToPrompt(messages: Message[], suppressImageNotes = false): stri
 const MODELS = [
   // Opera Aria — keyless, anonymous auth, powered by OpenAI + Google
   { id: "aria",                         object: "model", created: 1700000000, owned_by: "opera" },
+  // Yqcloud — GPT-4 proxy, userId pool rotation
+  ...YQCLOUD_MODELS,
+  // Cohere — command-a/r/r+ via HuggingFace Space, conversation pool
+  ...COHERE_MODELS,
   // Text + vision models — all available via chat.qwen.ai proxy
   { id: "qwen3.7-max",                 object: "model", created: 1700000000, owned_by: "qwen" },
   { id: "qwen3.6-plus",                object: "model", created: 1700000000, owned_by: "qwen" },
@@ -679,6 +685,91 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
           completion_tokens_details: { reasoning_tokens: 0, audio_tokens: 0, accepted_prediction_tokens: 0, rejected_prediction_tokens: 0 },
         },
       });
+      return;
+    }
+
+    // ── Yqcloud provider path ────────────────────────────────────────────────
+    if (isYqcloudModel(model)) {
+      const yqMessages = effectiveMessages.map(m => ({
+        role: m.role,
+        content: typeof m.content === "string" ? m.content : getMessageText(m.content),
+      }));
+
+      if (stream) {
+        startSSE();
+        res.write(sseChunk({ role: "assistant", content: "" }));
+        const yqStream = await yqcloudChatStream(yqMessages);
+        await new Promise<void>((resolve, reject) => {
+          yqStream.on("data", (chunk: Buffer) => {
+            const text = chunk.toString();
+            if (text) res.write(sseChunk({ content: text }));
+          });
+          yqStream.on("end", resolve);
+          yqStream.on("error", reject);
+        });
+        res.write(sseChunk({}, "stop"));
+        res.write("data: [DONE]\n\n");
+        res.end();
+        return;
+      }
+
+      const { content } = await yqcloudChat(yqMessages);
+      if (!content) {
+        res.status(502).json({ error: { message: "No response from Yqcloud", type: "upstream_error", code: "empty_response" } });
+        return;
+      }
+      const toolCalls = hasTools ? detectToolCalls(content) : null;
+      if (toolCalls) {
+        res.json({ id, object: "chat.completion", created, model: _rawModel, service_tier: "default", system_fingerprint: "fp_yqcloud_gateway",
+          choices: [{ index: 0, message: { role: "assistant", refusal: null, content: null, tool_calls: toolCalls }, logprobs: null, finish_reason: "tool_calls" }],
+          usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 } });
+        return;
+      }
+      res.json({ id, object: "chat.completion", created, model: _rawModel, service_tier: "default", system_fingerprint: "fp_yqcloud_gateway",
+        choices: [{ index: 0, message: { role: "assistant", refusal: null, content }, logprobs: null, finish_reason: "stop" }],
+        usage: { prompt_tokens: 0, completion_tokens: content.length, total_tokens: content.length } });
+      return;
+    }
+
+    // ── Cohere provider path ─────────────────────────────────────────────────
+    if (isCohereModel(model)) {
+      const cohereModel = resolveCohereModel(model);
+      const cohereMessages = effectiveMessages.map(m => ({
+        role: m.role,
+        content: typeof m.content === "string" ? m.content : getMessageText(m.content),
+      }));
+
+      if (stream) {
+        startSSE();
+        res.write(sseChunk({ role: "assistant", content: "" }));
+        try {
+          for await (const token of cohereStream(cohereMessages, cohereModel)) {
+            if (token) res.write(sseChunk({ content: token }));
+          }
+        } catch (err: unknown) {
+          logger.warn({ err }, "cohere: stream error");
+        }
+        res.write(sseChunk({}, "stop"));
+        res.write("data: [DONE]\n\n");
+        res.end();
+        return;
+      }
+
+      const { content } = await cohereChat(cohereMessages, cohereModel);
+      if (!content) {
+        res.status(502).json({ error: { message: "No response from Cohere", type: "upstream_error", code: "empty_response" } });
+        return;
+      }
+      const toolCalls = hasTools ? detectToolCalls(content) : null;
+      if (toolCalls) {
+        res.json({ id, object: "chat.completion", created, model: _rawModel, service_tier: "default", system_fingerprint: "fp_cohere_gateway",
+          choices: [{ index: 0, message: { role: "assistant", refusal: null, content: null, tool_calls: toolCalls }, logprobs: null, finish_reason: "tool_calls" }],
+          usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 } });
+        return;
+      }
+      res.json({ id, object: "chat.completion", created, model: _rawModel, service_tier: "default", system_fingerprint: "fp_cohere_gateway",
+        choices: [{ index: 0, message: { role: "assistant", refusal: null, content }, logprobs: null, finish_reason: "stop" }],
+        usage: { prompt_tokens: 0, completion_tokens: content.length, total_tokens: content.length } });
       return;
     }
 
