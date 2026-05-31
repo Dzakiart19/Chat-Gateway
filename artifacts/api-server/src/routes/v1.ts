@@ -5,6 +5,10 @@ import { logger } from "../lib/logger";
 import { recordRequest } from "../lib/stats";
 import { getPooledMidtoken } from "../lib/umid-pool";
 import { ariaChat, ariaChatStream, parseAriaSSELine } from "../lib/aria-provider";
+import {
+  chatGPTChat, chatGPTChatStream, parseChatGPTSSELine,
+  isChatGPTModel, resolveChatGPTModel, CHATGPT_MODEL_LIST,
+} from "../lib/chatgpt-provider";
 
 const router = Router();
 
@@ -408,6 +412,8 @@ function messagesToPrompt(messages: Message[], suppressImageNotes = false): stri
 // ── Model registry ───────────────────────────────────────────────────────────
 
 const MODELS = [
+  // ChatGPT guest mode — GPT-4o/o1/o3/o4 without API key (requires residential IP or CHATGPT_PROXY)
+  ...CHATGPT_MODEL_LIST,
   // Opera Aria — keyless, anonymous auth, powered by OpenAI + Google
   { id: "aria",                         object: "model", created: 1700000000, owned_by: "opera" },
   // Text + vision models — all available via chat.qwen.ai proxy
@@ -679,6 +685,144 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
           completion_tokens_details: { reasoning_tokens: 0, audio_tokens: 0, accepted_prediction_tokens: 0, rejected_prediction_tokens: 0 },
         },
       });
+      return;
+    }
+
+    // ── ChatGPT guest mode provider path ────────────────────────────────────
+    if (isChatGPTModel(model)) {
+      const gptMessages = effectiveMessages.map(m => ({
+        role: m.role === "system" ? "user" : m.role,
+        content: getMessageText(m.content),
+      }));
+      // Inject system messages as first user message prefix
+      const systemMsgs = effectiveMessages.filter(m => m.role === "system");
+      const nonSystemMsgs = effectiveMessages.filter(m => m.role !== "system");
+      let chatGPTMessages = nonSystemMsgs.map(m => ({
+        role: m.role as "user" | "assistant",
+        content: getMessageText(m.content),
+      }));
+      if (systemMsgs.length > 0) {
+        const sysText = systemMsgs.map(m => getMessageText(m.content)).join("\n");
+        if (chatGPTMessages.length > 0 && chatGPTMessages[0].role === "user") {
+          chatGPTMessages[0] = {
+            role: "user",
+            content: `[System: ${sysText}]\n\n${chatGPTMessages[0].content}`,
+          };
+        } else {
+          chatGPTMessages = [{ role: "user", content: `[System: ${sysText}]` }, ...chatGPTMessages];
+        }
+      }
+      void gptMessages;
+
+      if (stream) {
+        startSSE();
+        res.write(sseChunk({ role: "assistant", content: "" }));
+
+        let lastText = "";
+        let totalOutput = 0;
+
+        let gptStream: import("stream").Readable;
+        let gptModel: string;
+        try {
+          ({ stream: gptStream, gptModel } = await chatGPTChatStream(chatGPTMessages, model));
+        } catch (err: unknown) {
+          const msg = String((err as Error).message ?? err);
+          const isIpBlock = msg.includes("Unusual activity") || msg.includes("403");
+          const errMsg = isIpBlock
+            ? "ChatGPT guest mode blocked on datacenter IPs. Set CHATGPT_PROXY env var (residential proxy) or CHATGPT_TURNSTILE_TOKEN to enable."
+            : `ChatGPT upstream error: ${msg.slice(0, 200)}`;
+          res.write(`data: ${JSON.stringify({ error: { message: errMsg, code: isIpBlock ? "ip_blocked" : "upstream_error" } })}\n\n`);
+          res.write("data: [DONE]\n\n");
+          res.end();
+          return;
+        }
+        let buf = "";
+
+        await new Promise<void>((resolve, reject) => {
+          gptStream.on("data", (chunk: Buffer) => {
+            buf += chunk.toString("utf8");
+            const lines = buf.split("\n");
+            buf = lines.pop() ?? "";
+            for (const line of lines) {
+              if (!line.startsWith("data: ")) continue;
+              const raw = line.slice(6).trim();
+              if (raw === "[DONE]") { resolve(); return; }
+              try {
+                const j = JSON.parse(raw) as { error?: string; v?: string };
+                if (j.error) {
+                  logger.warn({ err: j.error }, "ChatGPT stream error event");
+                  resolve();
+                  return;
+                }
+                // v-encoded streaming: delta from last text
+                if (typeof j.v === "string") {
+                  const delta = j.v.length > lastText.length ? j.v.slice(lastText.length) : "";
+                  lastText = j.v;
+                  if (delta) { res.write(sseChunk({ content: delta })); totalOutput++; }
+                }
+              } catch { /* skip malformed */ }
+            }
+          });
+          gptStream.on("end", resolve);
+          gptStream.on("error", reject);
+        });
+
+        res.write(sseChunk({}, "stop"));
+        if (includeUsage) res.write(sseUsageChunk(0, totalOutput));
+        res.write("data: [DONE]\n\n");
+        res.end();
+        void gptModel;
+        return;
+      }
+
+      // Non-streaming
+      let gptContent: string;
+      let gptModel: string;
+      try {
+        ({ content: gptContent, model: gptModel } = await chatGPTChat(chatGPTMessages, model));
+      } catch (err: unknown) {
+        const msg = String((err as Error).message ?? err);
+        const isIpBlock = msg.includes("Unusual activity") || msg.includes("403");
+        logger.warn({ err: msg }, "ChatGPT: upstream error");
+        res.status(isIpBlock ? 503 : 502).json({
+          error: {
+            message: isIpBlock
+              ? "ChatGPT guest mode blocked on datacenter IPs. Set CHATGPT_PROXY env var (residential proxy) or CHATGPT_TURNSTILE_TOKEN to enable."
+              : `ChatGPT upstream error: ${msg.slice(0, 200)}`,
+            type: "upstream_error",
+            code: isIpBlock ? "ip_blocked" : "upstream_error",
+          },
+        });
+        return;
+      }
+      if (!gptContent) {
+        res.status(502).json({
+          error: { message: "No response from ChatGPT", type: "upstream_error", code: "empty_response" },
+        });
+        return;
+      }
+      res.json({
+        id,
+        object: "chat.completion",
+        created,
+        model: _rawModel,
+        service_tier: "default",
+        system_fingerprint: "fp_chatgpt_gateway",
+        choices: [{
+          index: 0,
+          message: { role: "assistant", refusal: null, content: gptContent },
+          logprobs: null,
+          finish_reason: "stop",
+        }],
+        usage: {
+          prompt_tokens: 0,
+          completion_tokens: 0,
+          total_tokens: 0,
+          prompt_tokens_details: { cached_tokens: 0, audio_tokens: 0 },
+          completion_tokens_details: { reasoning_tokens: 0, audio_tokens: 0, accepted_prediction_tokens: 0, rejected_prediction_tokens: 0 },
+        },
+      });
+      void gptModel;
       return;
     }
 
