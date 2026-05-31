@@ -9,6 +9,7 @@ import { ariaChat, ariaChatStream, parseAriaSSELine } from "../lib/aria-provider
 import { yqcloudChat, yqcloudChatStream, isYqcloudModel, YQCLOUD_MODELS } from "../lib/yqcloud-provider";
 import { cohereChat, cohereStream, isCohereModel, resolveCohereModel, COHERE_MODELS } from "../lib/cohere-provider";
 import { perplexityChat, perplexityStream, isPerplexityModel, PERPLEXITY_MODELS } from "../lib/perplexity-provider";
+import { gptfreeChat, gptfreeStream, isGptfreeModel, GPTFREE_MODELS } from "../lib/gptfree-provider";
 
 const router = Router();
 
@@ -593,6 +594,8 @@ const MODELS: ModelEntry[] = [
   ...COHERE_MODELS.map(m => ({ ...m, capabilities: { vision: false, tools: true, json_mode: false, streaming: true } })),
   // Perplexity — web search + AI, no auth, IP-based rate limit
   ...PERPLEXITY_MODELS.map(m => ({ ...m, capabilities: { vision: false, tools: true, json_mode: false, streaming: true }, context_window: 127072 })),
+  // GPTFree — Firebase anonymous auth, no account required
+  ...GPTFREE_MODELS.map(m => ({ ...m, capabilities: { vision: false, tools: true, json_mode: false, streaming: true } })),
   // Qwen text + vision models — all support vision via OSS image upload
   { id: "qwen3.7-max",                 object: "model", created: 1748736000, owned_by: "qwen", context_window: 131072,
     capabilities: { vision: true, tools: true, json_mode: true, streaming: true } },
@@ -1095,6 +1098,67 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
       res.json({ id, object: "chat.completion", created, model: _rawModel, service_tier: "default", system_fingerprint: "fp_perplexity_gateway",
         choices: [{ index: 0, message: { role: "assistant", refusal: null, content: pplxContent }, logprobs: null, finish_reason: pplxFinish }],
         usage: { prompt_tokens: pplxIn, completion_tokens: pplxOut, total_tokens: pplxIn + pplxOut } });
+      return;
+    }
+
+    // ── GPTFree provider path ────────────────────────────────────────────────
+    if (isGptfreeModel(model)) {
+      const gfEffective = hasImages ? await flattenVisionMessages(effectiveMessages) : effectiveMessages;
+      const gfMessages = gfEffective.map(m => ({
+        role: m.role,
+        content: typeof m.content === "string" ? m.content : getMessageText(m.content),
+      }));
+
+      if (stream) {
+        startSSE();
+        res.write(sseChunk({ role: "assistant", content: "" }));
+        const gfMaxChars = _max ? _max * 4 : Infinity;
+        let gfCharCount = 0;
+        let gfLengthStop = false;
+        try {
+          for await (const token of gptfreeStream(gfMessages, model)) {
+            if (!token || gfLengthStop) continue;
+            let t = token;
+            if (gfCharCount + t.length > gfMaxChars) {
+              t = t.slice(0, gfMaxChars - gfCharCount);
+              gfLengthStop = true;
+            }
+            gfCharCount += t.length;
+            if (t) res.write(sseChunk({ content: t }));
+          }
+        } catch (err: unknown) {
+          logger.warn({ err }, "gptfree: stream error");
+        }
+        const gfStreamFinish = gfLengthStop ? "length" : "stop";
+        if (includeUsage) {
+          const gfPromptEst = estimateTokens(messagesToPrompt(gfMessages));
+          res.write(sseUsageChunk(gfPromptEst, Math.round(gfCharCount / 4)));
+        }
+        res.write(sseChunk({}, gfStreamFinish));
+        res.write("data: [DONE]\n\n");
+        res.end();
+        return;
+      }
+
+      const { content: gfRaw, inputTokens: gfIn, outputTokens: gfOut } = await gptfreeChat(gfMessages, model);
+      if (!gfRaw) {
+        res.status(502).json({ error: { message: "No response from GPTFree", type: "upstream_error", code: "empty_response" } });
+        return;
+      }
+      const gfMt = applyMaxTokens(gfRaw, _max);
+      const gfSt = applyStop(gfMt.content, _stop);
+      const gfContent = gfSt.content;
+      const gfFinish = (gfMt.truncated || gfSt.truncated) ? "length" : "stop";
+      const gfToolCalls = hasTools ? detectToolCalls(gfContent) : null;
+      if (gfToolCalls) {
+        res.json({ id, object: "chat.completion", created, model: _rawModel, service_tier: "default", system_fingerprint: "fp_gptfree_gateway",
+          choices: [{ index: 0, message: { role: "assistant", refusal: null, content: null, tool_calls: gfToolCalls }, logprobs: null, finish_reason: "tool_calls" }],
+          usage: { prompt_tokens: gfIn, completion_tokens: gfOut, total_tokens: gfIn + gfOut } });
+        return;
+      }
+      res.json({ id, object: "chat.completion", created, model: _rawModel, service_tier: "default", system_fingerprint: "fp_gptfree_gateway",
+        choices: [{ index: 0, message: { role: "assistant", refusal: null, content: gfContent }, logprobs: null, finish_reason: gfFinish }],
+        usage: { prompt_tokens: gfIn, completion_tokens: gfOut, total_tokens: gfIn + gfOut } });
       return;
     }
 
