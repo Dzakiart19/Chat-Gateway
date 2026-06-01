@@ -8,7 +8,6 @@
  */
 
 import { randomUUID } from "crypto";
-import { Readable } from "stream";
 import { logger } from "./logger";
 
 const API_URL = "https://api.binjie.fun/api/generateStream";
@@ -32,7 +31,7 @@ function nextUserId(): string {
 
 // ── Message helpers ───────────────────────────────────────────────────────────
 
-interface ChatMessage {
+export interface ChatMessage {
   role: string;
   content: string;
 }
@@ -51,11 +50,23 @@ function extractSystem(messages: ChatMessage[]): string {
     .join("\n");
 }
 
-// ── Streaming ─────────────────────────────────────────────────────────────────
+// ── Models ────────────────────────────────────────────────────────────────────
 
-export async function yqcloudChatStream(
+export const YQCLOUD_MODELS = [
+  { id: "yqcloud",      object: "model", created: 1700000000, owned_by: "yqcloud" },
+  { id: "yqcloud-gpt4", object: "model", created: 1700000000, owned_by: "yqcloud" },
+];
+
+export function isYqcloudModel(model: string): boolean {
+  return model === "yqcloud" || model === "yqcloud-gpt4";
+}
+
+// ── Streaming (AsyncGenerator) ────────────────────────────────────────────────
+
+export async function* yqcloudStream(
   messages: ChatMessage[],
-): Promise<Readable> {
+  _model = "yqcloud",
+): AsyncGenerator<string> {
   const userId = nextUserId();
   const prompt = buildPrompt(messages);
   const system = extractSystem(messages);
@@ -90,36 +101,30 @@ export async function yqcloudChatStream(
 
   if (!res.body) throw new Error("Yqcloud: no response body");
 
-  const readable = Readable.from(
-    (async function* () {
-      const reader = (res.body as unknown as { getReader(): ReadableStreamDefaultReader<Uint8Array> }).getReader();
-      const dec = new TextDecoder();
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (value) yield dec.decode(value, { stream: true });
-      }
-    })(),
-  );
-
-  return readable;
+  const reader = (res.body as unknown as { getReader(): ReadableStreamDefaultReader<Uint8Array> }).getReader();
+  const dec = new TextDecoder();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value) {
+      const chunk = dec.decode(value, { stream: true });
+      if (chunk) yield chunk;
+    }
+  }
 }
 
-export async function yqcloudChat(messages: ChatMessage[]): Promise<{ content: string }> {
-  const stream = await yqcloudChatStream(messages);
-  return new Promise((resolve, reject) => {
-    let content = "";
-    stream.on("data", (chunk: Buffer | string) => { content += chunk.toString(); });
-    stream.on("end", () => resolve({ content: content.trim() }));
-    stream.on("error", reject);
-  });
-}
+// ── Non-streaming ─────────────────────────────────────────────────────────────
 
-export const YQCLOUD_MODELS = [
-  { id: "yqcloud",         object: "model", created: 1700000000, owned_by: "yqcloud" },
-  { id: "yqcloud-gpt4",    object: "model", created: 1700000000, owned_by: "yqcloud" },
-];
-
-export function isYqcloudModel(model: string): boolean {
-  return model === "yqcloud" || model === "yqcloud-gpt4";
+export async function yqcloudChat(
+  messages: ChatMessage[],
+  model = "yqcloud",
+): Promise<{ content: string; inputTokens: number; outputTokens: number }> {
+  let content = "";
+  for await (const token of yqcloudStream(messages, model)) {
+    content += token;
+  }
+  const trimmed = content.trim();
+  const inputEst = Math.round(messages.map(m => m.content).join("").length / 4);
+  const outputEst = Math.round(trimmed.length / 4);
+  return { content: trimmed, inputTokens: inputEst, outputTokens: outputEst };
 }

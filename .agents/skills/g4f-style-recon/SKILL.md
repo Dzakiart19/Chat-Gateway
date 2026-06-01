@@ -303,6 +303,66 @@ curl -s -X POST "https://target.ai/ENDPOINT" \
 
 ---
 
+## Standar Interface Wajib — SEMUA Provider HARUS Sama
+
+Setiap provider file **wajib** mengekspor 4 hal berikut dengan nama dan signature yang konsisten:
+
+```typescript
+// 1. Tipe message (export — dipakai v1.ts)
+export interface ChatMessage { role: string; content: string; }
+
+// 2. Daftar model
+export const PROVIDER_MODELS = [
+  { id: "model-id", object: "model", created: 1700000000, owned_by: "provider" },
+];
+
+// 3. Cek apakah model ini milik provider
+export function isProviderModel(model: string): boolean {
+  return PROVIDER_MODELS.some(m => m.id === model);
+}
+
+// 4a. Streaming — AsyncGenerator<string> (BUKAN Promise<Readable>, BUKAN callback)
+export async function* providerStream(
+  messages: ChatMessage[],
+  model = "default-model",
+): AsyncGenerator<string> { /* ... yield token */ }
+
+// 4b. Non-streaming — WAJIB return inputTokens + outputTokens
+export async function providerChat(
+  messages: ChatMessage[],
+  model = "default-model",
+): Promise<{ content: string; inputTokens: number; outputTokens: number }> {
+  let content = "";
+  for await (const token of providerStream(messages, model)) content += token;
+  const trimmed = content.trim();
+  return {
+    content: trimmed,
+    inputTokens: Math.round(messages.map(m => m.content).join("").length / 4),
+    outputTokens: Math.round(trimmed.length / 4),
+  };
+}
+```
+
+**Aturan interface wajib:**
+- Stream harus `AsyncGenerator<string>` — **BUKAN** `Promise<Readable>` dan **BUKAN** callback-based
+- Chat harus return `{ content, inputTokens, outputTokens }` — tiga field, tidak boleh hanya `{ content }`
+- Kedua fungsi harus menerima `(messages: ChatMessage[], model?)` — urutan param wajib sama
+- `PROVIDER_MODELS` harus di-spread ke `MODELS[]` di v1.ts, bukan hardcoded
+- `isProviderModel` wajib digunakan di v1.ts, bukan `model === "nama"` hardcoded
+
+**Status konsistensi semua provider saat ini (Juni 2025):**
+
+| Provider | `MODELS` export | `isModel()` | `stream(msgs,model)` AsyncGen | `chat(msgs,model)` + tokenCounts |
+|---|---|---|---|---|
+| **Aria** | ✅ `ARIA_MODELS` | ✅ `isAriaModel` | ✅ `ariaStream` | ✅ `ariaChat` |
+| **Yqcloud** | ✅ `YQCLOUD_MODELS` | ✅ `isYqcloudModel` | ✅ `yqcloudStream` | ✅ `yqcloudChat` |
+| **Cohere** | ✅ `COHERE_MODELS` | ✅ `isCohereModel` | ✅ `cohereStream` | ✅ `cohereChat` |
+| **Perplexity** | ✅ `PERPLEXITY_MODELS` | ✅ `isPerplexityModel` | ✅ `perplexityStream` | ✅ `perplexityChat` |
+| **GPTFree** | ✅ `GPTFREE_MODELS` | ✅ `isGptfreeModel` | ✅ `gptfreeStream` | ✅ `gptfreeChat` |
+| **AlgoChat** | ✅ `ALGOCHAT_MODELS` | ✅ `isAlgochatModel` | ✅ `algochatStream` | ✅ `algochatChat` |
+
+---
+
 ## Template Implementasi Provider Lengkap (Node.js/TypeScript)
 
 Gunakan template ini sebagai dasar setiap provider baru. **Semua bagian wajib diisi.**
@@ -315,7 +375,7 @@ import { logger } from "./logger";
 
 export interface ChatMessage { role: string; content: string; }
 
-// ── Token cache ───────────────────────────────────────────────────────────────
+// ── Token/Session cache ───────────────────────────────────────────────────────
 let cachedToken: string | null = null;
 let tokenExpiry = 0;
 
@@ -326,19 +386,18 @@ async function getToken(): Promise<string> {
   });
   const data = await resp.json() as { token: string };
   cachedToken = data.token;
-  tokenExpiry = Date.now() + 3600_000; // 1 jam
+  tokenExpiry = Date.now() + 3600_000;
   return cachedToken!;
 }
 
-// ── Streaming (AsyncGenerator — wajib) ───────────────────────────────────────
-export async function* streamProvider(
+// ── Streaming (AsyncGenerator — WAJIB, bukan Promise<Readable>) ───────────────
+export async function* providerStream(
   messages: ChatMessage[],
-  model: string = "default-model",
+  model = "default-model",
 ): AsyncGenerator<string> {
   const token = await getToken();
   const body = JSON.stringify({ model, messages, stream: true });
 
-  // Gunakan curl untuk bypass TLS fingerprint
   const raw = execSync(
     `curl -sN -X POST "https://target.ai/v1/chat/completions" \
       -H "Authorization: Bearer ${token}" \
@@ -355,30 +414,28 @@ export async function* streamProvider(
     if (data === "[DONE]") break;
     try {
       const json = JSON.parse(data);
-      // Sesuaikan dengan format response provider
       const content = json.choices?.[0]?.delta?.content ?? "";
       if (content) yield content;
     } catch { /* skip malformed */ }
   }
 }
 
-// ── Non-streaming (wajib) ─────────────────────────────────────────────────────
-export async function chatProvider(
+// ── Non-streaming (WAJIB return inputTokens + outputTokens) ───────────────────
+export async function providerChat(
   messages: ChatMessage[],
-  model: string = "default-model",
+  model = "default-model",
 ): Promise<{ content: string; inputTokens: number; outputTokens: number }> {
   let content = "";
-  for await (const token of streamProvider(messages, model)) {
-    content += token;
-  }
+  for await (const token of providerStream(messages, model)) content += token;
+  const trimmed = content.trim();
   return {
-    content: content.trim(),
+    content: trimmed,
     inputTokens: Math.round(messages.map(m => m.content).join("").length / 4),
-    outputTokens: Math.round(content.length / 4),
+    outputTokens: Math.round(trimmed.length / 4),
   };
 }
 
-// ── Model list (wajib) ────────────────────────────────────────────────────────
+// ── Model list (WAJIB export, jangan hardcode di v1.ts) ──────────────────────
 export const PROVIDER_MODELS = [
   { id: "provider-model-1", object: "model", created: 1700000000, owned_by: "provider" },
   { id: "provider-model-2", object: "model", created: 1700000000, owned_by: "provider" },

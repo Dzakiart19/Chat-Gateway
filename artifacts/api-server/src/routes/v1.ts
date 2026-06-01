@@ -5,8 +5,8 @@ import { requireApiKey } from "../middleware/requireApiKey";
 import { logger } from "../lib/logger";
 import { recordRequest } from "../lib/stats";
 import { getPooledMidtoken } from "../lib/umid-pool";
-import { ariaChat, ariaChatStream, parseAriaSSELine } from "../lib/aria-provider";
-import { yqcloudChat, yqcloudChatStream, isYqcloudModel, YQCLOUD_MODELS } from "../lib/yqcloud-provider";
+import { ariaChat, ariaStream, isAriaModel, ARIA_MODELS } from "../lib/aria-provider";
+import { yqcloudChat, yqcloudStream, isYqcloudModel, YQCLOUD_MODELS } from "../lib/yqcloud-provider";
 import { cohereChat, cohereStream, isCohereModel, resolveCohereModel, COHERE_MODELS } from "../lib/cohere-provider";
 import { perplexityChat, perplexityStream, isPerplexityModel, PERPLEXITY_MODELS } from "../lib/perplexity-provider";
 import { gptfreeChat, gptfreeStream, isGptfreeModel, GPTFREE_MODELS } from "../lib/gptfree-provider";
@@ -587,8 +587,7 @@ interface ModelEntry {
 
 const MODELS: ModelEntry[] = [
   // Opera Aria — keyless, anonymous auth, powered by OpenAI + Google
-  { id: "aria", object: "model", created: 1700000000, owned_by: "opera",
-    capabilities: { vision: false, tools: true, json_mode: false, streaming: true } },
+  ...ARIA_MODELS.map(m => ({ ...m, capabilities: { vision: false, tools: true, json_mode: false, streaming: true } })),
   // Yqcloud — GPT-4 proxy, userId pool rotation
   ...YQCLOUD_MODELS.map(m => ({ ...m, capabilities: { vision: false, tools: true, json_mode: false, streaming: true } })),
   // Cohere — command-a/r/r+ via HuggingFace Space
@@ -846,36 +845,30 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
 
   try {
     // ── ARIA provider path ───────────────────────────────────────────────────
-    if (model === "aria") {
+    if (isAriaModel(model)) {
       const ariaEffective = hasImages ? await flattenVisionMessages(effectiveMessages) : effectiveMessages;
-      const query = messagesToPrompt(ariaEffective);
+      const ariaMessages = ariaEffective.map(m => ({
+        role: m.role,
+        content: typeof m.content === "string" ? m.content : getMessageText(m.content),
+      }));
 
       if (stream) {
         startSSE();
 
-        // Collect full response for tool detection, stop sequences, max_tokens
-        const ariaStream = await ariaChatStream(query);
         let ariaCollected = "";
-        let ariaBuf = "";
-        await new Promise<void>((resolve, reject) => {
-          ariaStream.on("data", (chunk: Buffer) => {
-            ariaBuf += chunk.toString("utf8");
-            const lines = ariaBuf.split("\n");
-            ariaBuf = lines.pop() ?? "";
-            for (const line of lines) {
-              const text = parseAriaSSELine(line);
-              if (text) ariaCollected += text;
-            }
-          });
-          ariaStream.on("end", resolve);
-          ariaStream.on("error", reject);
-        });
+        try {
+          for await (const token of ariaStream(ariaMessages, model)) {
+            if (token) ariaCollected += token;
+          }
+        } catch (err: unknown) {
+          logger.warn({ err }, "aria: stream error");
+        }
 
         const ariaSsMt = applyMaxTokens(ariaCollected, _max);
         const ariaSsSt = applyStop(ariaSsMt.content, _stop);
         const ariaFinalText = ariaSsSt.content;
         const ariaStreamFinish = (ariaSsMt.truncated || ariaSsSt.truncated) ? "length" : "stop";
-        const ariaPromptEst = estimateTokens(query);
+        const ariaPromptEst = Math.round(ariaMessages.map(m => m.content).join("").length / 4);
         const ariaOutEst = Math.round(ariaFinalText.length / 4);
 
         if (hasTools) {
@@ -909,7 +902,7 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
         return;
       }
 
-      const { content: ariaRaw, inputTokens, outputTokens } = await ariaChat(query);
+      const { content: ariaRaw, inputTokens, outputTokens } = await ariaChat(ariaMessages, model);
       if (!ariaRaw) {
         res.status(502).json({
           error: { message: "No response from Aria", type: "upstream_error", code: "empty_response" },
@@ -954,14 +947,14 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
       if (stream) {
         startSSE();
 
-        // Collect full response for tool detection, stop sequences, max_tokens
-        const yqStream = await yqcloudChatStream(yqMessages);
         let yqCollected = "";
-        await new Promise<void>((resolve, reject) => {
-          yqStream.on("data", (chunk: Buffer) => { yqCollected += chunk.toString(); });
-          yqStream.on("end", resolve);
-          yqStream.on("error", reject);
-        });
+        try {
+          for await (const token of yqcloudStream(yqMessages, model)) {
+            if (token) yqCollected += token;
+          }
+        } catch (err: unknown) {
+          logger.warn({ err }, "yqcloud: stream error");
+        }
 
         const yqSsMt = applyMaxTokens(yqCollected, _max);
         const yqSsSt = applyStop(yqSsMt.content, _stop);
@@ -1001,7 +994,7 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
         return;
       }
 
-      const { content: yqRaw } = await yqcloudChat(yqMessages);
+      const { content: yqRaw, inputTokens: yqInTokens, outputTokens: yqOutTokens } = await yqcloudChat(yqMessages, model);
       if (!yqRaw) {
         res.status(502).json({ error: { message: "No response from Yqcloud", type: "upstream_error", code: "empty_response" } });
         return;
@@ -1010,9 +1003,7 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
       const yqSt = applyStop(yqMt.content, _stop);
       const yqContent = yqSt.content;
       const yqFinish = (yqMt.truncated || yqSt.truncated) ? "length" : "stop";
-      const yqPromptTokens = estimateTokens(messagesToPrompt(yqMessages));
-      const yqCompTokens = estimateTokens(yqContent);
-      const yqUsage = { prompt_tokens: yqPromptTokens, completion_tokens: yqCompTokens, total_tokens: yqPromptTokens + yqCompTokens, prompt_tokens_details: { cached_tokens: 0, audio_tokens: 0 }, completion_tokens_details: { reasoning_tokens: 0, audio_tokens: 0, accepted_prediction_tokens: 0, rejected_prediction_tokens: 0 } };
+      const yqUsage = { prompt_tokens: yqInTokens, completion_tokens: yqOutTokens, total_tokens: yqInTokens + yqOutTokens, prompt_tokens_details: { cached_tokens: 0, audio_tokens: 0 }, completion_tokens_details: { reasoning_tokens: 0, audio_tokens: 0, accepted_prediction_tokens: 0, rejected_prediction_tokens: 0 } };
       const toolCalls = hasTools ? detectToolCalls(yqContent) : null;
       if (toolCalls) {
         res.json({ id, object: "chat.completion", created, model: _rawModel, service_tier: "default", system_fingerprint: "fp_yqcloud_gateway",
@@ -1206,7 +1197,7 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
 
         let acCollected = "";
         try {
-          for await (const token of algochatStream(acMessages)) {
+          for await (const token of algochatStream(acMessages, model)) {
             if (token) acCollected += token;
           }
         } catch (err: unknown) {
@@ -1251,7 +1242,7 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
         return;
       }
 
-      const { content: acRaw, inputTokens: acIn, outputTokens: acOut } = await algochatChat(acMessages);
+      const { content: acRaw, inputTokens: acIn, outputTokens: acOut } = await algochatChat(acMessages, model);
       if (!acRaw) {
         res.status(502).json({ error: { message: "No response from AlgoChat", type: "upstream_error", code: "empty_response" } });
         return;

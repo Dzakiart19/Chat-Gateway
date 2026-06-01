@@ -103,6 +103,7 @@ function parseDataStream(raw: string): string {
 // ── Streaming ────────────────────────────────────────────────────────────────
 export async function* algochatStream(
   messages: ChatMessage[],
+  _model = "algochat",
 ): AsyncGenerator<string> {
   await ensureSession();
   const chatId = await createChatId();
@@ -133,9 +134,10 @@ export async function* algochatStream(
 // ── Non-streaming ────────────────────────────────────────────────────────────
 export async function algochatChat(
   messages: ChatMessage[],
+  model = "algochat",
 ): Promise<{ content: string; inputTokens: number; outputTokens: number }> {
   let content = "";
-  for await (const chunk of algochatStream(messages)) {
+  for await (const chunk of algochatStream(messages, model)) {
     content += chunk;
   }
   const inputEst = Math.round(messages.map(m => m.content).join("").length / 4);
