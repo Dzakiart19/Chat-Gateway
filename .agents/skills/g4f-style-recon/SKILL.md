@@ -526,6 +526,27 @@ if (isProviderModel(model)) {
 }
 ```
 
+### 4. Tambah model ke Playground UI — **WAJIB, BUKAN OPSIONAL**
+
+File: `artifacts/gateway/src/pages/playground.tsx` — array `WORKING_MODELS` di bagian atas file.
+
+```typescript
+// Tambahkan entry baru di WORKING_MODELS sesuai nama group provider
+// ── NamaProvider (deskripsi singkat) ──
+{ id: "model-id",       label: "model-id (deskripsi)", group: "NamaGroup" },
+{ id: "model-alias",    label: "model-alias",           group: "NamaGroup" },
+```
+
+**Aturan wajib:**
+- Setiap model ID yang ada di `PROVIDER_MODELS` (provider file) **harus ada** di `WORKING_MODELS` (playground)
+- Nama `group` harus konsisten dan deskriptif (contoh: `"AlgoChat"`, `"Perplexity"`, `"GPTFree"`)
+- Label boleh menyertakan keterangan singkat dalam kurung, contoh: `"algochat (Gemini 3 Flash Preview)"`
+- Setelah edit playground, restart workflow `artifacts/gateway: web` agar perubahan aktif
+
+**Tanpa update ini, provider dianggap belum selesai** — user tidak bisa memilih model di UI.
+
+---
+
 > **Kenapa buffer dulu di streaming?**
 > Tool calling via prompt injection menghasilkan JSON di akhir output. Kalau langsung pipe token-by-token ke client, JSON `{"tool_calls":[...]}` ikut terkirim sebagai text biasa dan tidak bisa dideteksi. Dengan buffer → detect → emit ulang sebagai SSE `tool_calls` events, client (OpenAI SDK, LangChain, dll) menerima format yang benar.
 
@@ -632,7 +653,16 @@ curl -s -X POST $BASE/v1/chat/completions \
 # LULUS: "unsupported_value"
 ```
 
-**Provider dianggap SELESAI jika semua 10 test di atas LULUS.** Kalau ada 1 yang gagal, provider belum boleh di-commit.
+**Provider dianggap SELESAI jika semua 10 test di atas LULUS** DAN model sudah muncul di Playground UI. Kalau ada 1 test gagal atau model belum ada di Playground, provider belum boleh di-commit.
+
+### ✅ Checklist Final — Semua wajib terpenuhi sebelum commit
+
+| # | Item | Cara verifikasi |
+|---|---|---|
+| 1–10 | Semua test API lulus | Jalankan test bash di atas |
+| 11 | Model ada di `WORKING_MODELS` playground | Cek `artifacts/gateway/src/pages/playground.tsx` |
+| 12 | Model muncul di dropdown UI Playground | Buka `/playground` di browser, cek selector |
+| 13 | Entry di SKILL.md provider list diupdate | Tambah di seksi "Provider yang Sudah Diimplementasikan" |
 
 ---
 

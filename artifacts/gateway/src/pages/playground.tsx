@@ -25,9 +25,14 @@ const WORKING_MODELS = [
   { id: "command-r-plus",   label: "command-r-plus", group: "Cohere" },
   { id: "command-r",        label: "command-r", group: "Cohere" },
   { id: "command-r7b",      label: "command-r7b", group: "Cohere" },
+  // ── Perplexity (no auth, web search AI, IP rate limit ~15 req/day) ──
+  { id: "perplexity",           label: "perplexity (turbo)", group: "Perplexity" },
   // ── GPTFree (Firebase anonymous auth, no account needed) ──
   { id: "gptfree",              label: "gptfree (default)", group: "GPTFree" },
   { id: "gptfree-pro",          label: "gptfree-pro", group: "GPTFree" },
+  // ── AlgoChat (Gemini 3 Flash Preview via algochat.app guest session) ──
+  { id: "algochat",             label: "algochat (Gemini 3 Flash Preview)", group: "AlgoChat" },
+  { id: "gemini-3-flash-preview", label: "gemini-3-flash-preview", group: "AlgoChat" },
 ];
 
 const MODEL_GROUPS = [...new Set(WORKING_MODELS.map(m => m.group))];
