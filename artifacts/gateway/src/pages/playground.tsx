@@ -26,8 +26,16 @@ const WORKING_MODELS = [
   { id: "command-r",        label: "command-r", group: "Cohere" },
   { id: "command-r7b",      label: "command-r7b", group: "Cohere" },
   // ── GPTFree (Firebase anonymous auth, no account needed) ──
-  { id: "gptfree",          label: "gptfree (default)", group: "GPTFree" },
-  { id: "gptfree-pro",      label: "gptfree-pro", group: "GPTFree" },
+  { id: "gptfree",              label: "gptfree (default)", group: "GPTFree" },
+  { id: "gptfree-pro",          label: "gptfree-pro", group: "GPTFree" },
+  // ── ChatbotChatApp (Laravel session, CSRF + MD5 signed) ──
+  { id: "cbca",                 label: "cbca (ChatGPT-3.5)", group: "ChatbotChatApp" },
+  { id: "cbca-gpt4",            label: "cbca-gpt4 (ChatGPT-4)", group: "ChatbotChatApp" },
+  { id: "cbca-deepseek-r1",     label: "cbca-deepseek-r1", group: "ChatbotChatApp" },
+  { id: "cbca-deepseek-v3",     label: "cbca-deepseek-v3", group: "ChatbotChatApp" },
+  { id: "cbca-qwen3",           label: "cbca-qwen3-235b", group: "ChatbotChatApp" },
+  { id: "cbca-mistral",         label: "cbca-mistral-large", group: "ChatbotChatApp" },
+  { id: "cbca-codestral",       label: "cbca-codestral", group: "ChatbotChatApp" },
 ];
 
 const MODEL_GROUPS = [...new Set(WORKING_MODELS.map(m => m.group))];

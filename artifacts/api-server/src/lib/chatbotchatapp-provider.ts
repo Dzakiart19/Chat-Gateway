@@ -14,7 +14,13 @@
  * Response : OpenAI-format SSE — choices[0].delta.{content,reasoning,reasoning_content}
  *            finish_reason:"stop" terminates stream
  *
- * Rate limit: Unknown; session appears valid 24h. Single session handles many requests.
+ * Error codes (in SSE `id:` field):
+ *   1006 = hash/id verification failed → refresh session and retry
+ *   1002 = session/IP rate-limit or one-free-chat-per-IP guard → session refresh may help
+ *
+ * NOTE: This site uses a "one free chat per IP" anti-bot measure for guest access.
+ *       Provider may return 1002 after the first successful request from a given IP
+ *       until the cooldown expires. Session rotation is attempted automatically.
  */
 
 import { execSync } from "child_process";
@@ -237,6 +243,23 @@ function* parseCbcaSSE(raw: string): Generator<string> {
 
   for (const line of lines) {
     const trimmed = line.trim();
+
+    // Errors arrive as SSE `id:` field (e.g. id: {"code":1002,...})
+    if (trimmed.startsWith("id:")) {
+      const jsonStr = trimmed.slice(3).trim();
+      if (!jsonStr) continue;
+      try {
+        const idChunk = JSON.parse(jsonStr) as CbcaChunk;
+        if (idChunk.code !== undefined && idChunk.code !== 0) {
+          throw new Error(`cbca:${idChunk.code}`);
+        }
+      } catch (e) {
+        if (String(e).startsWith("Error: cbca:")) throw e;
+        // Not valid JSON or no error code — ignore
+      }
+      continue;
+    }
+
     if (!trimmed.startsWith("data:")) continue;
     const jsonStr = trimmed.slice(5).trim();
     if (!jsonStr || jsonStr === "[DONE]") { finished = true; continue; }
@@ -246,7 +269,7 @@ function* parseCbcaSSE(raw: string): Generator<string> {
     catch { continue; }
 
     if (chunk.code !== undefined && chunk.code !== 0) {
-      throw new Error(`cbca: stream error code ${chunk.code}: ${chunk.message ?? ""}`);
+      throw new Error(`cbca:${chunk.code}`);
     }
 
     if (!chunk.choices || chunk.choices.length === 0) continue;
@@ -263,7 +286,6 @@ function* parseCbcaSSE(raw: string): Generator<string> {
   }
 
   if (!finished) {
-    // If stream ended without explicit stop, that's OK for curl-based requests
     logger.debug("cbca: stream ended without explicit [DONE]");
   }
 }
@@ -329,7 +351,7 @@ export async function* cbcaStream(
   } catch (err) {
     const msg = String(err);
     if (msg.includes("invalid session") || msg.includes("CSRF") || msg.includes("timestamp failed")) {
-      logger.warn("cbca: session error, invalidating and retrying");
+      logger.warn("cbca: session error on curl, invalidating and retrying");
       invalidateSession();
       session = await getSession();
       try {
@@ -344,23 +366,42 @@ export async function* cbcaStream(
     }
   }
 
-  // Check for stream-level errors before yielding
-  if (raw.includes('"code":') && raw.includes('"code":1006')) {
-    logger.warn({ snippet: raw.slice(0, 200) }, "cbca: got code 1006 — session invalid, retrying");
-    invalidateSession();
-    session = await getSession();
-    try {
-      raw = callCbca(session.csrf, prepared, modal);
-    } catch (retryErr) {
-      logger.error({ err: String(retryErr) }, "cbca: second retry failed");
-      throw new Error("ChatbotChatApp request failed after session refresh");
-    }
-  }
-
+  // Parse stream; auto-retry on session error codes 1002/1006
   let hasContent = false;
-  for (const token of parseCbcaSSE(raw)) {
-    hasContent = true;
-    yield token;
+  try {
+    for (const token of parseCbcaSSE(raw)) {
+      hasContent = true;
+      yield token;
+    }
+  } catch (streamErr) {
+    const code = String(streamErr).match(/cbca:(\d+)/)?.[1];
+    if (code === "1006" || code === "1002") {
+      logger.warn(
+        { code, snippet: raw.slice(0, 200) },
+        `cbca: got error code ${code} — invalidating session and retrying`,
+      );
+      invalidateSession();
+      session = await getSession();
+      let raw2: string;
+      try {
+        raw2 = callCbca(session.csrf, prepared, modal);
+      } catch (retryErr) {
+        logger.error({ err: String(retryErr) }, "cbca: retry curl failed");
+        throw new Error(`ChatbotChatApp error ${code} — retry request failed`);
+      }
+      try {
+        for (const token of parseCbcaSSE(raw2)) {
+          hasContent = true;
+          yield token;
+        }
+      } catch (retryStreamErr) {
+        const code2 = String(retryStreamErr).match(/cbca:(\d+)/)?.[1];
+        logger.error({ code: code2, snippet: raw2.slice(0, 200) }, "cbca: retry also returned error");
+        throw new Error(`ChatbotChatApp error ${code2 ?? "unknown"} after session refresh`);
+      }
+    } else {
+      throw streamErr;
+    }
   }
 
   if (!hasContent) {
