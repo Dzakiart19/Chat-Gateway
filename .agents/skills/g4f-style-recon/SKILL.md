@@ -269,6 +269,28 @@ curl -s -X POST "https://target.ai/ENDPOINT" \
 - **Rate limit:** ~15–20 req/hari per IP, reset 00:00 UTC
 - **Catatan:** Hanya `model_preference: "turbo"` atau `"default"` yang berfungsi tanpa auth
 
+### 7. AlgoChat (Gemini 3 Flash Preview)
+- **File:** `artifacts/api-server/src/lib/algochat-provider.ts`
+- **Auth:** Guest session via cookie — `POST /api/session` → dapat `algochat_session` + `algochat_user` cookie (TTL ~4 jam, cache di `/tmp/algochat_session_cookies.txt`)
+- **Flow per request:** `ensureSession()` → `POST /api/create-chat` (buat chatId baru) → `POST /api/chat`
+- **Endpoint chat:** `POST https://algochat.app/api/chat`
+- **Payload WAJIB:**
+  ```json
+  {
+    "messages": [{"id":"msg-0","role":"user","content":"...","parts":[{"type":"text","text":"..."}]}],
+    "chatId": "uuid-from-create-chat",
+    "model": "google/gemini-3-flash-preview",
+    "webSearchEnabled": false
+  }
+  ```
+  ⚠️ **KRITIS:** Field `parts` wajib ada di setiap message — tanpanya server return 500 "Cannot read properties of undefined (reading 'map')"
+- **Response format:** Vercel AI SDK Data Stream Protocol — parse `{"type":"text-delta","delta":"..."}` events
+- **Vision:** ⚡ Fallback via `flattenVisionMessages()`
+- **Tools:** ✅ Via prompt injection
+- **Models:** `algochat`, `gemini-3-flash-preview`
+- **Streaming:** ✅ Via execSync curl, parse Vercel AI SDK stream
+- **Catatan:** Referer header `https://algochat.app/chat/{chatId}` wajib disertakan
+
 ### 6. GPTFree
 - **File:** `artifacts/api-server/src/lib/gptfree-provider.ts`
 - **Auth:** Firebase anonymous auth (tanpa akun) — auto-renew token

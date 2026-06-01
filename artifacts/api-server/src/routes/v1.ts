@@ -10,6 +10,7 @@ import { yqcloudChat, yqcloudChatStream, isYqcloudModel, YQCLOUD_MODELS } from "
 import { cohereChat, cohereStream, isCohereModel, resolveCohereModel, COHERE_MODELS } from "../lib/cohere-provider";
 import { perplexityChat, perplexityStream, isPerplexityModel, PERPLEXITY_MODELS } from "../lib/perplexity-provider";
 import { gptfreeChat, gptfreeStream, isGptfreeModel, GPTFREE_MODELS } from "../lib/gptfree-provider";
+import { algochatChat, algochatStream, isAlgochatModel, ALGOCHAT_MODELS } from "../lib/algochat-provider";
 
 const router = Router();
 
@@ -596,6 +597,8 @@ const MODELS: ModelEntry[] = [
   ...PERPLEXITY_MODELS.map(m => ({ ...m, capabilities: { vision: false, tools: true, json_mode: false, streaming: true }, context_window: 127072 })),
   // GPTFree — Firebase anonymous auth, no account required
   ...GPTFREE_MODELS.map(m => ({ ...m, capabilities: { vision: false, tools: true, json_mode: false, streaming: true } })),
+  // AlgoChat — Gemini 3 Flash Preview via algochat.app guest session
+  ...ALGOCHAT_MODELS.map(m => ({ ...m, capabilities: { vision: false, tools: true, json_mode: false, streaming: true }, context_window: 1048576 })),
   // Qwen text + vision models — all support vision via OSS image upload
   { id: "qwen3.7-max",                 object: "model", created: 1748736000, owned_by: "qwen", context_window: 131072,
     capabilities: { vision: true, tools: true, json_mode: true, streaming: true } },
@@ -1187,6 +1190,87 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
       res.json({ id, object: "chat.completion", created, model: _rawModel, service_tier: "default", system_fingerprint: "fp_perplexity_gateway",
         choices: [{ index: 0, message: { role: "assistant", refusal: null, content: pplxContent }, logprobs: null, finish_reason: pplxFinish }],
         usage: pplxUsage });
+      return;
+    }
+
+    // ── AlgoChat provider path ───────────────────────────────────────────────
+    if (isAlgochatModel(model)) {
+      const acEffective = hasImages ? await flattenVisionMessages(effectiveMessages) : effectiveMessages;
+      const acMessages = acEffective.map(m => ({
+        role: m.role,
+        content: typeof m.content === "string" ? m.content : getMessageText(m.content),
+      }));
+
+      if (stream) {
+        startSSE();
+
+        let acCollected = "";
+        try {
+          for await (const token of algochatStream(acMessages)) {
+            if (token) acCollected += token;
+          }
+        } catch (err: unknown) {
+          logger.warn({ err }, "algochat: stream error");
+        }
+
+        const acSsMt = applyMaxTokens(acCollected, _max);
+        const acSsSt = applyStop(acSsMt.content, _stop);
+        const acFinalText = acSsSt.content;
+        const acStreamFinish = (acSsMt.truncated || acSsSt.truncated) ? "length" : "stop";
+        const acPromptEst = estimateTokens(messagesToPrompt(acMessages));
+        const acOutEst = Math.round(acFinalText.length / 4);
+
+        if (hasTools) {
+          const acStreamToolCalls = detectToolCalls(acFinalText);
+          if (acStreamToolCalls) {
+            res.write(sseChunk({ role: "assistant", content: null }));
+            for (let i = 0; i < acStreamToolCalls.length; i++) {
+              const tc = acStreamToolCalls[i];
+              res.write(sseChunk({ tool_calls: [{ index: i, id: tc.id, type: "function", function: { name: tc.function.name, arguments: "" } }] }));
+              const args = tc.function.arguments;
+              for (let j = 0; j < args.length; j += 20) {
+                res.write(sseChunk({ tool_calls: [{ index: i, function: { arguments: args.slice(j, j + 20) } }] }));
+              }
+            }
+            if (includeUsage) res.write(sseUsageChunk(acPromptEst, acOutEst));
+            res.write(sseChunk({}, "tool_calls"));
+            res.write("data: [DONE]\n\n");
+            res.end();
+            return;
+          }
+        }
+
+        res.write(sseChunk({ role: "assistant", content: "" }));
+        for (const w of acFinalText.split(/(\s+)/)) {
+          if (w) res.write(sseChunk({ content: w }));
+        }
+        if (includeUsage) res.write(sseUsageChunk(acPromptEst, acOutEst));
+        res.write(sseChunk({}, acStreamFinish));
+        res.write("data: [DONE]\n\n");
+        res.end();
+        return;
+      }
+
+      const { content: acRaw, inputTokens: acIn, outputTokens: acOut } = await algochatChat(acMessages);
+      if (!acRaw) {
+        res.status(502).json({ error: { message: "No response from AlgoChat", type: "upstream_error", code: "empty_response" } });
+        return;
+      }
+      const acMt = applyMaxTokens(acRaw, _max);
+      const acSt = applyStop(acMt.content, _stop);
+      const acContent = acSt.content;
+      const acFinish = (acMt.truncated || acSt.truncated) ? "length" : "stop";
+      const acUsage = { prompt_tokens: acIn, completion_tokens: acOut, total_tokens: acIn + acOut, prompt_tokens_details: { cached_tokens: 0, audio_tokens: 0 }, completion_tokens_details: { reasoning_tokens: 0, audio_tokens: 0, accepted_prediction_tokens: 0, rejected_prediction_tokens: 0 } };
+      const acToolCalls = hasTools ? detectToolCalls(acContent) : null;
+      if (acToolCalls) {
+        res.json({ id, object: "chat.completion", created, model: _rawModel, service_tier: "default", system_fingerprint: "fp_algochat_gateway",
+          choices: [{ index: 0, message: { role: "assistant", refusal: null, content: null, tool_calls: acToolCalls }, logprobs: null, finish_reason: "tool_calls" }],
+          usage: acUsage });
+        return;
+      }
+      res.json({ id, object: "chat.completion", created, model: _rawModel, service_tier: "default", system_fingerprint: "fp_algochat_gateway",
+        choices: [{ index: 0, message: { role: "assistant", refusal: null, content: acContent }, logprobs: null, finish_reason: acFinish }],
+        usage: acUsage });
       return;
     }
 
