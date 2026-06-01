@@ -10,7 +10,6 @@ import { yqcloudChat, yqcloudChatStream, isYqcloudModel, YQCLOUD_MODELS } from "
 import { cohereChat, cohereStream, isCohereModel, resolveCohereModel, COHERE_MODELS } from "../lib/cohere-provider";
 import { perplexityChat, perplexityStream, isPerplexityModel, PERPLEXITY_MODELS } from "../lib/perplexity-provider";
 import { gptfreeChat, gptfreeStream, isGptfreeModel, GPTFREE_MODELS } from "../lib/gptfree-provider";
-import { cbcaChat, cbcaStream, isCbcaModel, CBCA_MODELS } from "../lib/chatbotchatapp-provider";
 
 const router = Router();
 
@@ -597,8 +596,6 @@ const MODELS: ModelEntry[] = [
   ...PERPLEXITY_MODELS.map(m => ({ ...m, capabilities: { vision: false, tools: true, json_mode: false, streaming: true }, context_window: 127072 })),
   // GPTFree — Firebase anonymous auth, no account required
   ...GPTFREE_MODELS.map(m => ({ ...m, capabilities: { vision: false, tools: true, json_mode: false, streaming: true } })),
-  // ChatbotChatApp — Laravel session + CSRF + MD5 signed, multiple models
-  ...CBCA_MODELS.map(m => ({ ...m, capabilities: { vision: false, tools: true, json_mode: false, streaming: true } })),
   // Qwen text + vision models — all support vision via OSS image upload
   { id: "qwen3.7-max",                 object: "model", created: 1748736000, owned_by: "qwen", context_window: 131072,
     capabilities: { vision: true, tools: true, json_mode: true, streaming: true } },
@@ -1162,67 +1159,6 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
       res.json({ id, object: "chat.completion", created, model: _rawModel, service_tier: "default", system_fingerprint: "fp_gptfree_gateway",
         choices: [{ index: 0, message: { role: "assistant", refusal: null, content: gfContent }, logprobs: null, finish_reason: gfFinish }],
         usage: { prompt_tokens: gfIn, completion_tokens: gfOut, total_tokens: gfIn + gfOut } });
-      return;
-    }
-
-    // ── ChatbotChatApp provider path ─────────────────────────────────────────
-    if (isCbcaModel(model)) {
-      const cbcaEffective = hasImages ? await flattenVisionMessages(effectiveMessages) : effectiveMessages;
-      const cbcaMessages = cbcaEffective.map(m => ({
-        role: m.role,
-        content: typeof m.content === "string" ? m.content : getMessageText(m.content),
-      }));
-
-      if (stream) {
-        startSSE();
-        res.write(sseChunk({ role: "assistant", content: "" }));
-        const cbcaMaxChars = _max ? _max * 4 : Infinity;
-        let cbcaCharCount = 0;
-        let cbcaLengthStop = false;
-        try {
-          for await (const token of cbcaStream(cbcaMessages, model)) {
-            if (!token || cbcaLengthStop) continue;
-            let t = token;
-            if (cbcaCharCount + t.length > cbcaMaxChars) {
-              t = t.slice(0, cbcaMaxChars - cbcaCharCount);
-              cbcaLengthStop = true;
-            }
-            cbcaCharCount += t.length;
-            if (t) res.write(sseChunk({ content: t }));
-          }
-        } catch (err: unknown) {
-          logger.warn({ err }, "cbca: stream error");
-        }
-        const cbcaStreamFinish = cbcaLengthStop ? "length" : "stop";
-        if (includeUsage) {
-          const cbcaPromptEst = estimateTokens(messagesToPrompt(cbcaMessages));
-          res.write(sseUsageChunk(cbcaPromptEst, Math.round(cbcaCharCount / 4)));
-        }
-        res.write(sseChunk({}, cbcaStreamFinish));
-        res.write("data: [DONE]\n\n");
-        res.end();
-        return;
-      }
-
-      const { content: cbcaRaw, inputTokens: cbcaIn, outputTokens: cbcaOut } = await cbcaChat(cbcaMessages, model);
-      if (!cbcaRaw) {
-        res.status(502).json({ error: { message: "No response from ChatbotChatApp", type: "upstream_error", code: "empty_response" } });
-        return;
-      }
-      const cbcaMt = applyMaxTokens(cbcaRaw, _max);
-      const cbcaSt = applyStop(cbcaMt.content, _stop);
-      const cbcaContent = cbcaSt.content;
-      const cbcaFinish = (cbcaMt.truncated || cbcaSt.truncated) ? "length" : "stop";
-      const cbcaToolCalls = hasTools ? detectToolCalls(cbcaContent) : null;
-      if (cbcaToolCalls) {
-        res.json({ id, object: "chat.completion", created, model: _rawModel, service_tier: "default", system_fingerprint: "fp_cbca_gateway",
-          choices: [{ index: 0, message: { role: "assistant", refusal: null, content: null, tool_calls: cbcaToolCalls }, logprobs: null, finish_reason: "tool_calls" }],
-          usage: { prompt_tokens: cbcaIn, completion_tokens: cbcaOut, total_tokens: cbcaIn + cbcaOut } });
-        return;
-      }
-      res.json({ id, object: "chat.completion", created, model: _rawModel, service_tier: "default", system_fingerprint: "fp_cbca_gateway",
-        choices: [{ index: 0, message: { role: "assistant", refusal: null, content: cbcaContent }, logprobs: null, finish_reason: cbcaFinish }],
-        usage: { prompt_tokens: cbcaIn, completion_tokens: cbcaOut, total_tokens: cbcaIn + cbcaOut } });
       return;
     }
 
