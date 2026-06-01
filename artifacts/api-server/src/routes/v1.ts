@@ -772,6 +772,18 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
     return;
   }
 
+  if (typeof _n === "number" && _n > 1) {
+    res.status(400).json({
+      error: {
+        message: `This gateway does not support n > 1. Got n=${_n}.`,
+        type: "invalid_request_error",
+        param: "n",
+        code: "unsupported_value",
+      },
+    });
+    return;
+  }
+
   // Detect images across all messages
   const allImageUrls = collectAllImages(messages);
   const hasImages = allImageUrls.length > 0;
@@ -837,39 +849,58 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
 
       if (stream) {
         startSSE();
-        res.write(sseChunk({ role: "assistant", content: "" }));
 
+        // Collect full response for tool detection, stop sequences, max_tokens
         const ariaStream = await ariaChatStream(query);
-        const ariaMaxChars = _max ? _max * 4 : Infinity;
-        let ariaCharCount = 0;
-        let ariaLengthStop = false;
-        let buf = "";
-
+        let ariaCollected = "";
+        let ariaBuf = "";
         await new Promise<void>((resolve, reject) => {
           ariaStream.on("data", (chunk: Buffer) => {
-            if (ariaLengthStop) return;
-            buf += chunk.toString("utf8");
-            const lines = buf.split("\n");
-            buf = lines.pop() ?? "";
+            ariaBuf += chunk.toString("utf8");
+            const lines = ariaBuf.split("\n");
+            ariaBuf = lines.pop() ?? "";
             for (const line of lines) {
-              if (ariaLengthStop) break;
-              let text = parseAriaSSELine(line);
-              if (!text) continue;
-              if (ariaCharCount + text.length > ariaMaxChars) {
-                text = text.slice(0, ariaMaxChars - ariaCharCount);
-                ariaLengthStop = true;
-              }
-              ariaCharCount += text.length;
-              if (text) res.write(sseChunk({ content: text }));
+              const text = parseAriaSSELine(line);
+              if (text) ariaCollected += text;
             }
           });
           ariaStream.on("end", resolve);
           ariaStream.on("error", reject);
         });
 
-        const ariaFinishReason = ariaLengthStop ? "length" : "stop";
-        if (includeUsage) res.write(sseUsageChunk(estimateTokens(query), Math.round(ariaCharCount / 4)));
-        res.write(sseChunk({}, ariaFinishReason));
+        const ariaSsMt = applyMaxTokens(ariaCollected, _max);
+        const ariaSsSt = applyStop(ariaSsMt.content, _stop);
+        const ariaFinalText = ariaSsSt.content;
+        const ariaStreamFinish = (ariaSsMt.truncated || ariaSsSt.truncated) ? "length" : "stop";
+        const ariaPromptEst = estimateTokens(query);
+        const ariaOutEst = Math.round(ariaFinalText.length / 4);
+
+        if (hasTools) {
+          const ariaStreamToolCalls = detectToolCalls(ariaFinalText);
+          if (ariaStreamToolCalls) {
+            res.write(sseChunk({ role: "assistant", content: null }));
+            for (let i = 0; i < ariaStreamToolCalls.length; i++) {
+              const tc = ariaStreamToolCalls[i];
+              res.write(sseChunk({ tool_calls: [{ index: i, id: tc.id, type: "function", function: { name: tc.function.name, arguments: "" } }] }));
+              const args = tc.function.arguments;
+              for (let j = 0; j < args.length; j += 20) {
+                res.write(sseChunk({ tool_calls: [{ index: i, function: { arguments: args.slice(j, j + 20) } }] }));
+              }
+            }
+            if (includeUsage) res.write(sseUsageChunk(ariaPromptEst, ariaOutEst));
+            res.write(sseChunk({}, "tool_calls"));
+            res.write("data: [DONE]\n\n");
+            res.end();
+            return;
+          }
+        }
+
+        res.write(sseChunk({ role: "assistant", content: "" }));
+        for (const w of ariaFinalText.split(/(\s+)/)) {
+          if (w) res.write(sseChunk({ content: w }));
+        }
+        if (includeUsage) res.write(sseUsageChunk(ariaPromptEst, ariaOutEst));
+        res.write(sseChunk({}, ariaStreamFinish));
         res.write("data: [DONE]\n\n");
         res.end();
         return;
@@ -886,28 +917,26 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
       const ariaSt = applyStop(ariaMt.content, _stop);
       const ariaContent = ariaSt.content;
       const ariaFinalFinish = (ariaMt.truncated || ariaSt.truncated) ? "length" : "stop";
+      const ariaUsage = {
+        prompt_tokens: inputTokens,
+        completion_tokens: outputTokens,
+        total_tokens: inputTokens + outputTokens,
+        prompt_tokens_details: { cached_tokens: 0, audio_tokens: 0 },
+        completion_tokens_details: { reasoning_tokens: 0, audio_tokens: 0, accepted_prediction_tokens: 0, rejected_prediction_tokens: 0 },
+      };
 
-      res.json({
-        id,
-        object: "chat.completion",
-        created,
-        model: _rawModel,
-        service_tier: "default",
+      const ariaToolCalls = hasTools ? detectToolCalls(ariaContent) : null;
+      if (ariaToolCalls) {
+        res.json({ id, object: "chat.completion", created, model: _rawModel, service_tier: "default",
+          system_fingerprint: "fp_aria_gateway",
+          choices: [{ index: 0, message: { role: "assistant", refusal: null, content: null, tool_calls: ariaToolCalls }, logprobs: null, finish_reason: "tool_calls" }],
+          usage: ariaUsage });
+        return;
+      }
+      res.json({ id, object: "chat.completion", created, model: _rawModel, service_tier: "default",
         system_fingerprint: "fp_aria_gateway",
-        choices: [{
-          index: 0,
-          message: { role: "assistant", refusal: null, content: ariaContent },
-          logprobs: null,
-          finish_reason: ariaFinalFinish,
-        }],
-        usage: {
-          prompt_tokens: inputTokens,
-          completion_tokens: outputTokens,
-          total_tokens: inputTokens + outputTokens,
-          prompt_tokens_details: { cached_tokens: 0, audio_tokens: 0 },
-          completion_tokens_details: { reasoning_tokens: 0, audio_tokens: 0, accepted_prediction_tokens: 0, rejected_prediction_tokens: 0 },
-        },
-      });
+        choices: [{ index: 0, message: { role: "assistant", refusal: null, content: ariaContent }, logprobs: null, finish_reason: ariaFinalFinish }],
+        usage: ariaUsage });
       return;
     }
 
@@ -921,31 +950,48 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
 
       if (stream) {
         startSSE();
-        res.write(sseChunk({ role: "assistant", content: "" }));
+
+        // Collect full response for tool detection, stop sequences, max_tokens
         const yqStream = await yqcloudChatStream(yqMessages);
-        const yqMaxChars = _max ? _max * 4 : Infinity;
-        let yqCharCount = 0;
-        let yqLengthStop = false;
+        let yqCollected = "";
         await new Promise<void>((resolve, reject) => {
-          yqStream.on("data", (chunk: Buffer) => {
-            if (yqLengthStop) return;
-            let text = chunk.toString();
-            if (!text) return;
-            if (yqCharCount + text.length > yqMaxChars) {
-              text = text.slice(0, yqMaxChars - yqCharCount);
-              yqLengthStop = true;
-            }
-            yqCharCount += text.length;
-            if (text) res.write(sseChunk({ content: text }));
-          });
+          yqStream.on("data", (chunk: Buffer) => { yqCollected += chunk.toString(); });
           yqStream.on("end", resolve);
           yqStream.on("error", reject);
         });
-        const yqStreamFinish = yqLengthStop ? "length" : "stop";
-        if (includeUsage) {
-          const yqPromptEst = estimateTokens(messagesToPrompt(yqMessages));
-          res.write(sseUsageChunk(yqPromptEst, Math.round(yqCharCount / 4)));
+
+        const yqSsMt = applyMaxTokens(yqCollected, _max);
+        const yqSsSt = applyStop(yqSsMt.content, _stop);
+        const yqFinalText = yqSsSt.content;
+        const yqStreamFinish = (yqSsMt.truncated || yqSsSt.truncated) ? "length" : "stop";
+        const yqPromptEst = estimateTokens(messagesToPrompt(yqMessages));
+        const yqOutEst = Math.round(yqFinalText.length / 4);
+
+        if (hasTools) {
+          const yqStreamToolCalls = detectToolCalls(yqFinalText);
+          if (yqStreamToolCalls) {
+            res.write(sseChunk({ role: "assistant", content: null }));
+            for (let i = 0; i < yqStreamToolCalls.length; i++) {
+              const tc = yqStreamToolCalls[i];
+              res.write(sseChunk({ tool_calls: [{ index: i, id: tc.id, type: "function", function: { name: tc.function.name, arguments: "" } }] }));
+              const args = tc.function.arguments;
+              for (let j = 0; j < args.length; j += 20) {
+                res.write(sseChunk({ tool_calls: [{ index: i, function: { arguments: args.slice(j, j + 20) } }] }));
+              }
+            }
+            if (includeUsage) res.write(sseUsageChunk(yqPromptEst, yqOutEst));
+            res.write(sseChunk({}, "tool_calls"));
+            res.write("data: [DONE]\n\n");
+            res.end();
+            return;
+          }
         }
+
+        res.write(sseChunk({ role: "assistant", content: "" }));
+        for (const w of yqFinalText.split(/(\s+)/)) {
+          if (w) res.write(sseChunk({ content: w }));
+        }
+        if (includeUsage) res.write(sseUsageChunk(yqPromptEst, yqOutEst));
         res.write(sseChunk({}, yqStreamFinish));
         res.write("data: [DONE]\n\n");
         res.end();
@@ -963,16 +1009,17 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
       const yqFinish = (yqMt.truncated || yqSt.truncated) ? "length" : "stop";
       const yqPromptTokens = estimateTokens(messagesToPrompt(yqMessages));
       const yqCompTokens = estimateTokens(yqContent);
+      const yqUsage = { prompt_tokens: yqPromptTokens, completion_tokens: yqCompTokens, total_tokens: yqPromptTokens + yqCompTokens, prompt_tokens_details: { cached_tokens: 0, audio_tokens: 0 }, completion_tokens_details: { reasoning_tokens: 0, audio_tokens: 0, accepted_prediction_tokens: 0, rejected_prediction_tokens: 0 } };
       const toolCalls = hasTools ? detectToolCalls(yqContent) : null;
       if (toolCalls) {
         res.json({ id, object: "chat.completion", created, model: _rawModel, service_tier: "default", system_fingerprint: "fp_yqcloud_gateway",
           choices: [{ index: 0, message: { role: "assistant", refusal: null, content: null, tool_calls: toolCalls }, logprobs: null, finish_reason: "tool_calls" }],
-          usage: { prompt_tokens: yqPromptTokens, completion_tokens: yqCompTokens, total_tokens: yqPromptTokens + yqCompTokens } });
+          usage: yqUsage });
         return;
       }
       res.json({ id, object: "chat.completion", created, model: _rawModel, service_tier: "default", system_fingerprint: "fp_yqcloud_gateway",
         choices: [{ index: 0, message: { role: "assistant", refusal: null, content: yqContent }, logprobs: null, finish_reason: yqFinish }],
-        usage: { prompt_tokens: yqPromptTokens, completion_tokens: yqCompTokens, total_tokens: yqPromptTokens + yqCompTokens } });
+        usage: yqUsage });
       return;
     }
 
@@ -987,29 +1034,49 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
 
       if (stream) {
         startSSE();
-        res.write(sseChunk({ role: "assistant", content: "" }));
-        const coMaxChars = _max ? _max * 4 : Infinity;
-        let coCharCount = 0;
-        let coLengthStop = false;
+
+        // Collect full response for tool detection, stop sequences, max_tokens
+        let coCollected = "";
         try {
           for await (const token of cohereStream(cohereMessages, cohereModel)) {
-            if (!token || coLengthStop) continue;
-            let t = token;
-            if (coCharCount + t.length > coMaxChars) {
-              t = t.slice(0, coMaxChars - coCharCount);
-              coLengthStop = true;
-            }
-            coCharCount += t.length;
-            if (t) res.write(sseChunk({ content: t }));
+            if (token) coCollected += token;
           }
         } catch (err: unknown) {
           logger.warn({ err }, "cohere: stream error");
         }
-        const coStreamFinish = coLengthStop ? "length" : "stop";
-        if (includeUsage) {
-          const coPromptEst = estimateTokens(messagesToPrompt(cohereMessages));
-          res.write(sseUsageChunk(coPromptEst, Math.round(coCharCount / 4)));
+
+        const coSsMt = applyMaxTokens(coCollected, _max);
+        const coSsSt = applyStop(coSsMt.content, _stop);
+        const coFinalText = coSsSt.content;
+        const coStreamFinish = (coSsMt.truncated || coSsSt.truncated) ? "length" : "stop";
+        const coPromptEst = estimateTokens(messagesToPrompt(cohereMessages));
+        const coOutEst = Math.round(coFinalText.length / 4);
+
+        if (hasTools) {
+          const coStreamToolCalls = detectToolCalls(coFinalText);
+          if (coStreamToolCalls) {
+            res.write(sseChunk({ role: "assistant", content: null }));
+            for (let i = 0; i < coStreamToolCalls.length; i++) {
+              const tc = coStreamToolCalls[i];
+              res.write(sseChunk({ tool_calls: [{ index: i, id: tc.id, type: "function", function: { name: tc.function.name, arguments: "" } }] }));
+              const args = tc.function.arguments;
+              for (let j = 0; j < args.length; j += 20) {
+                res.write(sseChunk({ tool_calls: [{ index: i, function: { arguments: args.slice(j, j + 20) } }] }));
+              }
+            }
+            if (includeUsage) res.write(sseUsageChunk(coPromptEst, coOutEst));
+            res.write(sseChunk({}, "tool_calls"));
+            res.write("data: [DONE]\n\n");
+            res.end();
+            return;
+          }
         }
+
+        res.write(sseChunk({ role: "assistant", content: "" }));
+        for (const w of coFinalText.split(/(\s+)/)) {
+          if (w) res.write(sseChunk({ content: w }));
+        }
+        if (includeUsage) res.write(sseUsageChunk(coPromptEst, coOutEst));
         res.write(sseChunk({}, coStreamFinish));
         res.write("data: [DONE]\n\n");
         res.end();
@@ -1027,16 +1094,17 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
       const coFinish = (coMt.truncated || coSt.truncated) ? "length" : "stop";
       const coPromptTokens = estimateTokens(messagesToPrompt(cohereMessages));
       const coCompTokens = estimateTokens(coContent);
+      const coUsage = { prompt_tokens: coPromptTokens, completion_tokens: coCompTokens, total_tokens: coPromptTokens + coCompTokens, prompt_tokens_details: { cached_tokens: 0, audio_tokens: 0 }, completion_tokens_details: { reasoning_tokens: 0, audio_tokens: 0, accepted_prediction_tokens: 0, rejected_prediction_tokens: 0 } };
       const toolCalls = hasTools ? detectToolCalls(coContent) : null;
       if (toolCalls) {
         res.json({ id, object: "chat.completion", created, model: _rawModel, service_tier: "default", system_fingerprint: "fp_cohere_gateway",
           choices: [{ index: 0, message: { role: "assistant", refusal: null, content: null, tool_calls: toolCalls }, logprobs: null, finish_reason: "tool_calls" }],
-          usage: { prompt_tokens: coPromptTokens, completion_tokens: coCompTokens, total_tokens: coPromptTokens + coCompTokens } });
+          usage: coUsage });
         return;
       }
       res.json({ id, object: "chat.completion", created, model: _rawModel, service_tier: "default", system_fingerprint: "fp_cohere_gateway",
         choices: [{ index: 0, message: { role: "assistant", refusal: null, content: coContent }, logprobs: null, finish_reason: coFinish }],
-        usage: { prompt_tokens: coPromptTokens, completion_tokens: coCompTokens, total_tokens: coPromptTokens + coCompTokens } });
+        usage: coUsage });
       return;
     }
 
@@ -1050,29 +1118,49 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
 
       if (stream) {
         startSSE();
-        res.write(sseChunk({ role: "assistant", content: "" }));
-        const pplxMaxChars = _max ? _max * 4 : Infinity;
-        let pplxCharCount = 0;
-        let pplxLengthStop = false;
+
+        // Collect full response for tool detection, stop sequences, max_tokens
+        let pplxCollected = "";
         try {
           for await (const token of perplexityStream(pplxMessages, model)) {
-            if (!token || pplxLengthStop) continue;
-            let t = token;
-            if (pplxCharCount + t.length > pplxMaxChars) {
-              t = t.slice(0, pplxMaxChars - pplxCharCount);
-              pplxLengthStop = true;
-            }
-            pplxCharCount += t.length;
-            if (t) res.write(sseChunk({ content: t }));
+            if (token) pplxCollected += token;
           }
         } catch (err: unknown) {
           logger.warn({ err }, "perplexity: stream error");
         }
-        const pplxStreamFinish = pplxLengthStop ? "length" : "stop";
-        if (includeUsage) {
-          const pplxPromptEst = estimateTokens(messagesToPrompt(pplxMessages));
-          res.write(sseUsageChunk(pplxPromptEst, Math.round(pplxCharCount / 4)));
+
+        const pplxSsMt = applyMaxTokens(pplxCollected, _max);
+        const pplxSsSt = applyStop(pplxSsMt.content, _stop);
+        const pplxFinalText = pplxSsSt.content;
+        const pplxStreamFinish = (pplxSsMt.truncated || pplxSsSt.truncated) ? "length" : "stop";
+        const pplxPromptEst = estimateTokens(messagesToPrompt(pplxMessages));
+        const pplxOutEst = Math.round(pplxFinalText.length / 4);
+
+        if (hasTools) {
+          const pplxStreamToolCalls = detectToolCalls(pplxFinalText);
+          if (pplxStreamToolCalls) {
+            res.write(sseChunk({ role: "assistant", content: null }));
+            for (let i = 0; i < pplxStreamToolCalls.length; i++) {
+              const tc = pplxStreamToolCalls[i];
+              res.write(sseChunk({ tool_calls: [{ index: i, id: tc.id, type: "function", function: { name: tc.function.name, arguments: "" } }] }));
+              const args = tc.function.arguments;
+              for (let j = 0; j < args.length; j += 20) {
+                res.write(sseChunk({ tool_calls: [{ index: i, function: { arguments: args.slice(j, j + 20) } }] }));
+              }
+            }
+            if (includeUsage) res.write(sseUsageChunk(pplxPromptEst, pplxOutEst));
+            res.write(sseChunk({}, "tool_calls"));
+            res.write("data: [DONE]\n\n");
+            res.end();
+            return;
+          }
         }
+
+        res.write(sseChunk({ role: "assistant", content: "" }));
+        for (const w of pplxFinalText.split(/(\s+)/)) {
+          if (w) res.write(sseChunk({ content: w }));
+        }
+        if (includeUsage) res.write(sseUsageChunk(pplxPromptEst, pplxOutEst));
         res.write(sseChunk({}, pplxStreamFinish));
         res.write("data: [DONE]\n\n");
         res.end();
@@ -1088,16 +1176,17 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
       const pplxSt = applyStop(pplxMt.content, _stop);
       const pplxContent = pplxSt.content;
       const pplxFinish = (pplxMt.truncated || pplxSt.truncated) ? "length" : "stop";
+      const pplxUsage = { prompt_tokens: pplxIn, completion_tokens: pplxOut, total_tokens: pplxIn + pplxOut, prompt_tokens_details: { cached_tokens: 0, audio_tokens: 0 }, completion_tokens_details: { reasoning_tokens: 0, audio_tokens: 0, accepted_prediction_tokens: 0, rejected_prediction_tokens: 0 } };
       const toolCalls = hasTools ? detectToolCalls(pplxContent) : null;
       if (toolCalls) {
         res.json({ id, object: "chat.completion", created, model: _rawModel, service_tier: "default", system_fingerprint: "fp_perplexity_gateway",
           choices: [{ index: 0, message: { role: "assistant", refusal: null, content: null, tool_calls: toolCalls }, logprobs: null, finish_reason: "tool_calls" }],
-          usage: { prompt_tokens: pplxIn, completion_tokens: pplxOut, total_tokens: pplxIn + pplxOut } });
+          usage: pplxUsage });
         return;
       }
       res.json({ id, object: "chat.completion", created, model: _rawModel, service_tier: "default", system_fingerprint: "fp_perplexity_gateway",
         choices: [{ index: 0, message: { role: "assistant", refusal: null, content: pplxContent }, logprobs: null, finish_reason: pplxFinish }],
-        usage: { prompt_tokens: pplxIn, completion_tokens: pplxOut, total_tokens: pplxIn + pplxOut } });
+        usage: pplxUsage });
       return;
     }
 
@@ -1111,29 +1200,49 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
 
       if (stream) {
         startSSE();
-        res.write(sseChunk({ role: "assistant", content: "" }));
-        const gfMaxChars = _max ? _max * 4 : Infinity;
-        let gfCharCount = 0;
-        let gfLengthStop = false;
+
+        // Collect full response for tool detection, stop sequences, max_tokens
+        let gfCollected = "";
         try {
           for await (const token of gptfreeStream(gfMessages, model)) {
-            if (!token || gfLengthStop) continue;
-            let t = token;
-            if (gfCharCount + t.length > gfMaxChars) {
-              t = t.slice(0, gfMaxChars - gfCharCount);
-              gfLengthStop = true;
-            }
-            gfCharCount += t.length;
-            if (t) res.write(sseChunk({ content: t }));
+            if (token) gfCollected += token;
           }
         } catch (err: unknown) {
           logger.warn({ err }, "gptfree: stream error");
         }
-        const gfStreamFinish = gfLengthStop ? "length" : "stop";
-        if (includeUsage) {
-          const gfPromptEst = estimateTokens(messagesToPrompt(gfMessages));
-          res.write(sseUsageChunk(gfPromptEst, Math.round(gfCharCount / 4)));
+
+        const gfSsMt = applyMaxTokens(gfCollected, _max);
+        const gfSsSt = applyStop(gfSsMt.content, _stop);
+        const gfFinalText = gfSsSt.content;
+        const gfStreamFinish = (gfSsMt.truncated || gfSsSt.truncated) ? "length" : "stop";
+        const gfPromptEst = estimateTokens(messagesToPrompt(gfMessages));
+        const gfOutEst = Math.round(gfFinalText.length / 4);
+
+        if (hasTools) {
+          const gfStreamToolCalls = detectToolCalls(gfFinalText);
+          if (gfStreamToolCalls) {
+            res.write(sseChunk({ role: "assistant", content: null }));
+            for (let i = 0; i < gfStreamToolCalls.length; i++) {
+              const tc = gfStreamToolCalls[i];
+              res.write(sseChunk({ tool_calls: [{ index: i, id: tc.id, type: "function", function: { name: tc.function.name, arguments: "" } }] }));
+              const args = tc.function.arguments;
+              for (let j = 0; j < args.length; j += 20) {
+                res.write(sseChunk({ tool_calls: [{ index: i, function: { arguments: args.slice(j, j + 20) } }] }));
+              }
+            }
+            if (includeUsage) res.write(sseUsageChunk(gfPromptEst, gfOutEst));
+            res.write(sseChunk({}, "tool_calls"));
+            res.write("data: [DONE]\n\n");
+            res.end();
+            return;
+          }
         }
+
+        res.write(sseChunk({ role: "assistant", content: "" }));
+        for (const w of gfFinalText.split(/(\s+)/)) {
+          if (w) res.write(sseChunk({ content: w }));
+        }
+        if (includeUsage) res.write(sseUsageChunk(gfPromptEst, gfOutEst));
         res.write(sseChunk({}, gfStreamFinish));
         res.write("data: [DONE]\n\n");
         res.end();
@@ -1149,16 +1258,17 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
       const gfSt = applyStop(gfMt.content, _stop);
       const gfContent = gfSt.content;
       const gfFinish = (gfMt.truncated || gfSt.truncated) ? "length" : "stop";
+      const gfUsage = { prompt_tokens: gfIn, completion_tokens: gfOut, total_tokens: gfIn + gfOut, prompt_tokens_details: { cached_tokens: 0, audio_tokens: 0 }, completion_tokens_details: { reasoning_tokens: 0, audio_tokens: 0, accepted_prediction_tokens: 0, rejected_prediction_tokens: 0 } };
       const gfToolCalls = hasTools ? detectToolCalls(gfContent) : null;
       if (gfToolCalls) {
         res.json({ id, object: "chat.completion", created, model: _rawModel, service_tier: "default", system_fingerprint: "fp_gptfree_gateway",
           choices: [{ index: 0, message: { role: "assistant", refusal: null, content: null, tool_calls: gfToolCalls }, logprobs: null, finish_reason: "tool_calls" }],
-          usage: { prompt_tokens: gfIn, completion_tokens: gfOut, total_tokens: gfIn + gfOut } });
+          usage: gfUsage });
         return;
       }
       res.json({ id, object: "chat.completion", created, model: _rawModel, service_tier: "default", system_fingerprint: "fp_gptfree_gateway",
         choices: [{ index: 0, message: { role: "assistant", refusal: null, content: gfContent }, logprobs: null, finish_reason: gfFinish }],
-        usage: { prompt_tokens: gfIn, completion_tokens: gfOut, total_tokens: gfIn + gfOut } });
+        usage: gfUsage });
       return;
     }
 
