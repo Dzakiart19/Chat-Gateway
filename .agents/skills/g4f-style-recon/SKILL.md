@@ -15,21 +15,25 @@ Setiap provider yang diimplementasikan **WAJIB** mendukung seluruh fitur berikut
 |---|---|---|
 | **Streaming SSE** | ✅ WAJIB | `stream: true` kirim SSE chunks OpenAI-format |
 | **Non-streaming** | ✅ WAJIB | `stream: false` return JSON lengkap |
-| **Tool / Function calling** | ✅ WAJIB | Deteksi JSON `{"tool_calls":[...]}` dari output model via `detectToolCalls()` |
+| **Tool / Function calling** | ✅ WAJIB | Deteksi JSON `{"tool_calls":[...]}` dari output model via `detectToolCalls()` — **wajib di streaming DAN non-streaming** |
+| **Streaming tool_calls SSE** | ✅ WAJIB | Streaming dengan tools: buffer full response → detectToolCalls → emit SSE `tool_calls` events (bukan text chunks). Format identik Qwen |
 | **Multi-tool parallel** | ✅ WAJIB | Satu response bisa return lebih dari 1 tool call |
 | **Tool results loop** | ✅ WAJIB | `role: "tool"` di messages harus di-handle di `messagesToPrompt()` |
 | **Vision / Image** | ✅ WAJIB | Kalau provider native support → kirim langsung. Kalau tidak → pakai `flattenVisionMessages()` sebagai fallback via Qwen |
 | **System prompt** | ✅ WAJIB | |
 | **JSON mode** | ✅ WAJIB | `response_format: {type: "json_object"}` inject instruksi JSON ke system |
 | **`finish_reason`** | ✅ WAJIB | `"stop"`, `"length"`, `"tool_calls"` |
-| **Token usage** | ✅ WAJIB | `prompt_tokens`, `completion_tokens`, `total_tokens` (estimasi boleh) |
-| **`max_tokens` + `max_completion_tokens`** | ✅ WAJIB | Support keduanya |
-| **`stop` sequences** | ✅ WAJIB | Post-process via `applyStop()` |
+| **Token usage lengkap** | ✅ WAJIB | `prompt_tokens`, `completion_tokens`, `total_tokens` + `prompt_tokens_details: {cached_tokens: 0, audio_tokens: 0}` + `completion_tokens_details: {reasoning_tokens: 0, audio_tokens: 0, accepted_prediction_tokens: 0, rejected_prediction_tokens: 0}` |
+| **`max_tokens` + `max_completion_tokens`** | ✅ WAJIB | Support keduanya via `applyMaxTokens()` — **wajib di streaming DAN non-streaming** |
+| **`stop` sequences** | ✅ WAJIB | Post-process via `applyStop()` — **wajib di streaming DAN non-streaming** |
 | **`temperature`, `top_p`** | ✅ WAJIB | Kirim ke provider kalau didukung, ignore kalau tidak |
-| **`stream_options.include_usage`** | ✅ WAJIB | Kirim usage chunk di akhir SSE kalau diminta |
+| **`stream_options.include_usage`** | ✅ WAJIB | Kirim `sseUsageChunk()` di akhir SSE kalau `includeUsage === true` |
+| **`n > 1` validation** | ✅ WAJIB | Return `400` dengan `unsupported_value` jika `n > 1` — sudah di-handle global di v1.ts, tidak perlu per-provider |
 | **Model capabilities metadata** | ✅ WAJIB | Entry di `MODELS[]` dengan `capabilities: {vision, tools, json_mode, streaming}` dan `context_window` |
 
 **TIDAK BOLEH** menambah provider yang hanya support chat biasa tanpa tool calling dan streaming — itu tidak berguna untuk AI agent otonom.
+
+**TIDAK BOLEH** implementasi setengah-setengah — semua fitur di atas wajib ada sekaligus, baik di streaming maupun non-streaming path. Jangan skip usage details, stop sequences, atau tool detection di salah satu path.
 
 ---
 
@@ -254,6 +258,27 @@ curl -s -X POST "https://target.ai/ENDPOINT" \
 - **Streaming:** ✅ Via async generator, parse `{type:"stream", token:"..."}` chunks
 - **Models:** `command-a`, `command-a-03-2025`, `command-r-plus`, `command-r`, `command-r7b`
 
+### 5. Perplexity AI
+- **File:** `artifacts/api-server/src/lib/perplexity-provider.ts`
+- **Auth:** Tidak perlu — guest mode tanpa akun
+- **Endpoint:** `POST https://www.perplexity.ai/rest/sse/perplexity_ask` (underscore, bukan hyphen)
+- **Vision:** ⚡ Fallback via `flattenVisionMessages()`
+- **Tools:** ✅ Via prompt injection
+- **Streaming:** ✅ Via execSync curl dengan `--tlsv1.3`, parse SSE `data:` events, field `answer` dari `patches[].value`
+- **Models:** `perplexity` (alias ke `turbo`)
+- **Rate limit:** ~15–20 req/hari per IP, reset 00:00 UTC
+- **Catatan:** Hanya `model_preference: "turbo"` atau `"default"` yang berfungsi tanpa auth
+
+### 6. GPTFree
+- **File:** `artifacts/api-server/src/lib/gptfree-provider.ts`
+- **Auth:** Firebase anonymous auth (tanpa akun) — auto-renew token
+- **Endpoint:** `https://us-central1-gptfree-2.cloudfunctions.net/agent_stream`
+- **Vision:** ⚡ Fallback via `flattenVisionMessages()`
+- **Tools:** ✅ Via prompt injection
+- **Streaming:** ✅ SSE `event:result` chunks
+- **Payload:** `{ message, images:[], history:[{type, content}] }`
+- **Models:** `gptfree`
+
 ---
 
 ## Template Implementasi Provider Lengkap (Node.js/TypeScript)
@@ -370,114 +395,222 @@ const MODELS: ModelEntry[] = [
 ];
 ```
 
-### 3. Tambah route di chat/completions (ikuti pola provider yang ada)
+### 3. Tambah route di chat/completions — **POLA WAJIB LENGKAP**
+
 ```typescript
 // Di bagian try{} di router.post("/chat/completions", ...)
 // Letakkan SEBELUM blok Qwen provider
 
 if (isProviderModel(model)) {
-  // Vision fallback — wajib untuk semua provider yang tidak support native vision
+  // Vision fallback — wajib untuk provider tanpa native vision
   const provEffective = hasImages ? await flattenVisionMessages(effectiveMessages) : effectiveMessages;
   const provMessages = provEffective.map(m => ({
     role: m.role,
     content: typeof m.content === "string" ? m.content : getMessageText(m.content),
   }));
 
+  // ── STREAMING PATH ──────────────────────────────────────────────────────────
   if (stream) {
     startSSE();
-    res.write(sseChunk({ role: "assistant", content: "" }));
-    const maxChars = _max ? _max * 4 : Infinity;
-    let charCount = 0;
-    let lengthStop = false;
 
+    // WAJIB: Buffer full response terlebih dahulu, baru proses
+    // Jangan pipe token langsung — harus buffer untuk tool detection + stop sequences
+    let provCollected = "";
     try {
       for await (const token of streamProvider(provMessages, model)) {
-        if (!token || lengthStop) continue;
-        let t = token;
-        if (charCount + t.length > maxChars) { t = t.slice(0, maxChars - charCount); lengthStop = true; }
-        charCount += t.length;
-        if (t) res.write(sseChunk({ content: t }));
+        if (token) provCollected += token;
       }
-    } catch (err) { logger.warn({ err }, "provider: stream error"); }
-
-    const streamFinish = lengthStop ? "length" : "stop";
-    if (includeUsage) {
-      const promptEst = estimateTokens(messagesToPrompt(provMessages));
-      res.write(sseUsageChunk(promptEst, Math.round(charCount / 4)));
+    } catch (err: unknown) {
+      logger.warn({ err }, "provider: stream error");
     }
-    res.write(sseChunk({}, streamFinish));
+
+    // WAJIB: Terapkan max_tokens dan stop sequences setelah collect
+    const provSsMt = applyMaxTokens(provCollected, _max);
+    const provSsSt = applyStop(provSsMt.content, _stop);
+    const provFinalText = provSsSt.content;
+    const provStreamFinish = (provSsMt.truncated || provSsSt.truncated) ? "length" : "stop";
+    const provPromptEst = estimateTokens(messagesToPrompt(provMessages));
+    const provOutEst = Math.round(provFinalText.length / 4);
+
+    // WAJIB: Deteksi tool calls — emit SSE tool_calls events (bukan text)
+    if (hasTools) {
+      const provStreamToolCalls = detectToolCalls(provFinalText);
+      if (provStreamToolCalls) {
+        res.write(sseChunk({ role: "assistant", content: null }));
+        for (let i = 0; i < provStreamToolCalls.length; i++) {
+          const tc = provStreamToolCalls[i];
+          res.write(sseChunk({ tool_calls: [{ index: i, id: tc.id, type: "function", function: { name: tc.function.name, arguments: "" } }] }));
+          const args = tc.function.arguments;
+          for (let j = 0; j < args.length; j += 20) {
+            res.write(sseChunk({ tool_calls: [{ index: i, function: { arguments: args.slice(j, j + 20) } }] }));
+          }
+        }
+        if (includeUsage) res.write(sseUsageChunk(provPromptEst, provOutEst));
+        res.write(sseChunk({}, "tool_calls"));
+        res.write("data: [DONE]\n\n");
+        res.end();
+        return;
+      }
+    }
+
+    // Normal text streaming — emit word-by-word
+    res.write(sseChunk({ role: "assistant", content: "" }));
+    for (const w of provFinalText.split(/(\s+)/)) {
+      if (w) res.write(sseChunk({ content: w }));
+    }
+    if (includeUsage) res.write(sseUsageChunk(provPromptEst, provOutEst));
+    res.write(sseChunk({}, provStreamFinish));
     res.write("data: [DONE]\n\n");
     res.end();
     return;
   }
 
-  const { content: raw, inputTokens, outputTokens } = await chatProvider(provMessages, model);
-  if (!raw) {
+  // ── NON-STREAMING PATH ──────────────────────────────────────────────────────
+  const { content: provRaw, inputTokens: provIn, outputTokens: provOut } = await chatProvider(provMessages, model);
+  if (!provRaw) {
     res.status(502).json({ error: { message: "No response from provider", type: "upstream_error", code: "empty_response" } });
     return;
   }
-  const mt = applyMaxTokens(raw, _max);
-  const st = applyStop(mt.content, _stop);
-  const finalContent = st.content;
-  const finish = (mt.truncated || st.truncated) ? "length" : "stop";
-  const promptTokens = estimateTokens(messagesToPrompt(provMessages));
-  const compTokens = estimateTokens(finalContent);
 
-  // Tool call detection (wajib)
-  const toolCalls = hasTools ? detectToolCalls(finalContent) : null;
-  if (toolCalls) {
+  // WAJIB: Terapkan max_tokens dan stop sequences
+  const provMt = applyMaxTokens(provRaw, _max);
+  const provSt = applyStop(provMt.content, _stop);
+  const provContent = provSt.content;
+  const provFinish = (provMt.truncated || provSt.truncated) ? "length" : "stop";
+
+  // WAJIB: Usage lengkap dengan details (bukan hanya 3 field)
+  const provUsage = {
+    prompt_tokens: provIn,
+    completion_tokens: provOut,
+    total_tokens: provIn + provOut,
+    prompt_tokens_details: { cached_tokens: 0, audio_tokens: 0 },
+    completion_tokens_details: { reasoning_tokens: 0, audio_tokens: 0, accepted_prediction_tokens: 0, rejected_prediction_tokens: 0 },
+  };
+
+  // WAJIB: Deteksi tool calls
+  const provToolCalls = hasTools ? detectToolCalls(provContent) : null;
+  if (provToolCalls) {
     res.json({ id, object: "chat.completion", created, model: _rawModel, service_tier: "default",
       system_fingerprint: "fp_provider_gateway",
-      choices: [{ index: 0, message: { role: "assistant", refusal: null, content: null, tool_calls: toolCalls }, logprobs: null, finish_reason: "tool_calls" }],
-      usage: { prompt_tokens: promptTokens, completion_tokens: compTokens, total_tokens: promptTokens + compTokens } });
+      choices: [{ index: 0, message: { role: "assistant", refusal: null, content: null, tool_calls: provToolCalls }, logprobs: null, finish_reason: "tool_calls" }],
+      usage: provUsage });
     return;
   }
   res.json({ id, object: "chat.completion", created, model: _rawModel, service_tier: "default",
     system_fingerprint: "fp_provider_gateway",
-    choices: [{ index: 0, message: { role: "assistant", refusal: null, content: finalContent }, logprobs: null, finish_reason: finish }],
-    usage: { prompt_tokens: promptTokens, completion_tokens: compTokens, total_tokens: promptTokens + compTokens } });
+    choices: [{ index: 0, message: { role: "assistant", refusal: null, content: provContent }, logprobs: null, finish_reason: provFinish }],
+    usage: provUsage });
   return;
 }
 ```
+
+> **Kenapa buffer dulu di streaming?**
+> Tool calling via prompt injection menghasilkan JSON di akhir output. Kalau langsung pipe token-by-token ke client, JSON `{"tool_calls":[...]}` ikut terkirim sebagai text biasa dan tidak bisa dideteksi. Dengan buffer → detect → emit ulang sebagai SSE `tool_calls` events, client (OpenAI SDK, LangChain, dll) menerima format yang benar.
 
 ---
 
 ## Checklist Sebelum Provider Dianggap Selesai
 
-Sebelum commit, pastikan semua ini sudah ditest:
+Sebelum commit, jalankan **semua** test di bawah ini. Provider dianggap selesai hanya jika **semua** lulus. Tidak ada pengecualian.
 
 ```bash
 APIKEY="sk-..."
+MODEL="NAMA_MODEL"
+BASE="http://localhost:8080"
 
-# 1. Non-streaming basic
-curl -s -X POST http://localhost:5000/v1/chat/completions \
+# ── 1. Non-streaming basic — cek ada content & usage lengkap ────────────────
+curl -s -X POST $BASE/v1/chat/completions \
   -H "Authorization: Bearer $APIKEY" -H "Content-Type: application/json" \
-  -d '{"model":"NAMA_MODEL","stream":false,"messages":[{"role":"user","content":"say hi"}]}'
+  -d "{\"model\":\"$MODEL\",\"stream\":false,\"messages\":[{\"role\":\"user\",\"content\":\"say hi in one word\"}]}" \
+  | node -e "let d=''; process.stdin.on('data',c=>d+=c); process.stdin.on('end',()=>{
+      const j=JSON.parse(d);
+      const u=j.usage||{};
+      console.log('[content]', j.choices?.[0]?.message?.content);
+      console.log('[finish_reason]', j.choices?.[0]?.finish_reason);
+      console.log('[usage keys]', Object.keys(u).join(', '));
+      console.log('[has prompt_tokens_details]', 'prompt_tokens_details' in u);
+      console.log('[has completion_tokens_details]', 'completion_tokens_details' in u);
+    })"
+# LULUS: content berisi teks, finish_reason=stop, usage punya 5 keys termasuk details
 
-# 2. Streaming
-curl -s -X POST http://localhost:5000/v1/chat/completions \
+# ── 2. Streaming — cek SSE text chunks dan finish chunk ────────────────────
+curl -s -X POST $BASE/v1/chat/completions \
   -H "Authorization: Bearer $APIKEY" -H "Content-Type: application/json" \
-  -d '{"model":"NAMA_MODEL","stream":true,"messages":[{"role":"user","content":"say hi"}]}' | head -10
+  -d "{\"model\":\"$MODEL\",\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"say hi\"}]}" \
+  | grep -E "finish_reason|content" | tail -3
+# LULUS: ada chunks dengan content, baris terakhir finish_reason: "stop"
 
-# 3. Tool calling
-curl -s -X POST http://localhost:5000/v1/chat/completions \
+# ── 3. Stop sequences — streaming ──────────────────────────────────────────
+curl -s -X POST $BASE/v1/chat/completions \
   -H "Authorization: Bearer $APIKEY" -H "Content-Type: application/json" \
-  -d '{"model":"NAMA_MODEL","stream":false,"messages":[{"role":"user","content":"get weather jakarta"}],"tools":[{"type":"function","function":{"name":"get_weather","description":"Get weather","parameters":{"type":"object","properties":{"location":{"type":"string"}}}}}]}'
+  -d "{\"model\":\"$MODEL\",\"stream\":true,\"stop\":[\"3\"],\"messages\":[{\"role\":\"user\",\"content\":\"count from 1 to 10 one per line\"}]}" \
+  | grep "finish_reason" | tail -1
+# LULUS: finish_reason: "length" (berhenti sebelum selesai)
 
-# 4. Vision (image URL publik)
-curl -s -X POST http://localhost:5000/v1/chat/completions \
+# ── 4. max_tokens — non-streaming ──────────────────────────────────────────
+curl -s -X POST $BASE/v1/chat/completions \
   -H "Authorization: Bearer $APIKEY" -H "Content-Type: application/json" \
-  -d '{"model":"NAMA_MODEL","stream":false,"messages":[{"role":"user","content":[{"type":"text","text":"What is in this image?"},{"type":"image_url","image_url":{"url":"https://picsum.photos/200"}}]}]}'
+  -d "{\"model\":\"$MODEL\",\"stream\":false,\"max_tokens\":5,\"messages\":[{\"role\":\"user\",\"content\":\"write a long story\"}]}" \
+  | node -e "let d=''; process.stdin.on('data',c=>d+=c); process.stdin.on('end',()=>{
+      const j=JSON.parse(d);
+      console.log('[finish_reason]', j.choices?.[0]?.finish_reason);
+      console.log('[completion_tokens]', j.usage?.completion_tokens);
+    })"
+# LULUS: finish_reason=length, completion_tokens <= 10 (estimasi ~2x max_tokens)
 
-# 5. Vision (URL hotlink-protected — wajib test ini)
-curl -s -X POST http://localhost:5000/v1/chat/completions \
+# ── 5. Tool calling — non-streaming ────────────────────────────────────────
+curl -s -X POST $BASE/v1/chat/completions \
   -H "Authorization: Bearer $APIKEY" -H "Content-Type: application/json" \
-  -d '{"model":"NAMA_MODEL","stream":false,"messages":[{"role":"user","content":[{"type":"text","text":"What animal?"},{"type":"image_url","image_url":{"url":"https://upload.wikimedia.org/wikipedia/commons/thumb/3/3a/Cat03.jpg/481px-Cat03.jpg"}}]}]}'
+  -d "{\"model\":\"$MODEL\",\"stream\":false,\"messages\":[{\"role\":\"user\",\"content\":\"What is the weather in Jakarta? Call get_weather.\"}],\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"description\":\"Get weather\",\"parameters\":{\"type\":\"object\",\"properties\":{\"location\":{\"type\":\"string\"}},\"required\":[\"location\"]}}}]}" \
+  | node -e "let d=''; process.stdin.on('data',c=>d+=c); process.stdin.on('end',()=>{
+      const j=JSON.parse(d);
+      const ch=j.choices?.[0];
+      console.log('[finish_reason]', ch?.finish_reason);
+      console.log('[has tool_calls]', !!(ch?.message?.tool_calls));
+      console.log('[content is null]', ch?.message?.content===null);
+    })"
+# LULUS: finish_reason=tool_calls, has tool_calls=true, content is null=true
 
-# 6. Model ada di list dengan capabilities
-curl -s http://localhost:5000/v1/models \
-  -H "Authorization: Bearer $APIKEY" | grep -A5 "NAMA_MODEL"
+# ── 6. Tool calling — streaming ────────────────────────────────────────────
+curl -s -X POST $BASE/v1/chat/completions \
+  -H "Authorization: Bearer $APIKEY" -H "Content-Type: application/json" \
+  -d "{\"model\":\"$MODEL\",\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"What is the weather in Jakarta? Call get_weather.\"}],\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"description\":\"Get weather\",\"parameters\":{\"type\":\"object\",\"properties\":{\"location\":{\"type\":\"string\"}},\"required\":[\"location\"]}}}]}" \
+  | grep -E "tool_calls|finish_reason" | head -5
+# LULUS: ada baris dengan tool_calls (bukan text biasa), finish_reason: "tool_calls"
+
+# ── 7. Vision — gambar publik ───────────────────────────────────────────────
+curl -s -X POST $BASE/v1/chat/completions \
+  -H "Authorization: Bearer $APIKEY" -H "Content-Type: application/json" \
+  -d "{\"model\":\"$MODEL\",\"stream\":false,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"What is in this image?\"},{\"type\":\"image_url\",\"image_url\":{\"url\":\"https://picsum.photos/seed/cat/200\"}}]}]}" \
+  | node -e "let d=''; process.stdin.on('data',c=>d+=c); process.stdin.on('end',()=>{console.log(JSON.parse(d).choices?.[0]?.message?.content?.slice(0,100));})"
+# LULUS: ada deskripsi gambar (via flattenVisionMessages fallback kalau tidak native)
+
+# ── 8. Vision — URL hotlink-protected (Wikipedia) ──────────────────────────
+curl -s -X POST $BASE/v1/chat/completions \
+  -H "Authorization: Bearer $APIKEY" -H "Content-Type: application/json" \
+  -d "{\"model\":\"$MODEL\",\"stream\":false,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"What animal is this?\"},{\"type\":\"image_url\",\"image_url\":{\"url\":\"https://upload.wikimedia.org/wikipedia/commons/thumb/3/3a/Cat03.jpg/481px-Cat03.jpg\"}}]}]}" \
+  | node -e "let d=''; process.stdin.on('data',c=>d+=c); process.stdin.on('end',()=>{console.log(JSON.parse(d).choices?.[0]?.message?.content?.slice(0,80));})"
+# LULUS: menyebut "cat" atau "kucing"
+
+# ── 9. Model muncul di /v1/models dengan capabilities ──────────────────────
+curl -s $BASE/v1/models -H "Authorization: Bearer $APIKEY" \
+  | node -e "let d=''; process.stdin.on('data',c=>d+=c); process.stdin.on('end',()=>{
+      const j=JSON.parse(d);
+      const m=j.data.find(x=>x.id.includes('$MODEL'));
+      console.log('[found]', !!m);
+      console.log('[capabilities]', JSON.stringify(m?.capabilities));
+    })"
+# LULUS: found=true, capabilities punya vision/tools/json_mode/streaming
+
+# ── 10. n > 1 — sudah di-handle global, verifikasi saja ───────────────────
+curl -s -X POST $BASE/v1/chat/completions \
+  -H "Authorization: Bearer $APIKEY" -H "Content-Type: application/json" \
+  -d "{\"model\":\"$MODEL\",\"n\":2,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}" \
+  | node -e "let d=''; process.stdin.on('data',c=>d+=c); process.stdin.on('end',()=>{console.log(JSON.parse(d).error?.code);})"
+# LULUS: "unsupported_value"
 ```
+
+**Provider dianggap SELESAI jika semua 10 test di atas LULUS.** Kalau ada 1 yang gagal, provider belum boleh di-commit.
 
 ---
 
