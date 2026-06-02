@@ -11,6 +11,7 @@ import { cohereChat, cohereStream, isCohereModel, resolveCohereModel, COHERE_MOD
 import { perplexityChat, perplexityStream, isPerplexityModel, PERPLEXITY_MODELS } from "../lib/perplexity-provider";
 import { gptfreeChat, gptfreeStream, isGptfreeModel, GPTFREE_MODELS } from "../lib/gptfree-provider";
 import { algochatChat, algochatStream, isAlgochatModel, ALGOCHAT_MODELS } from "../lib/algochat-provider";
+import { blackboxChat, blackboxStream, isBlackboxModel, BLACKBOX_MODELS } from "../lib/blackbox-provider";
 
 const router = Router();
 
@@ -598,6 +599,8 @@ const MODELS: ModelEntry[] = [
   ...GPTFREE_MODELS.map(m => ({ ...m, capabilities: { vision: false, tools: true, json_mode: false, streaming: true } })),
   // AlgoChat — Gemini 3 Flash Preview via algochat.app guest session
   ...ALGOCHAT_MODELS.map(m => ({ ...m, capabilities: { vision: false, tools: true, json_mode: false, streaming: true }, context_window: 1048576 })),
+  // Blackbox AI — reverse-engineered endpoint, session cookie optional
+  ...BLACKBOX_MODELS.map(m => ({ ...m, capabilities: { vision: false, tools: false, json_mode: false, streaming: true }, context_window: 8192 })),
   // Qwen text + vision models — all support vision via OSS image upload
   { id: "qwen3.7-max",                 object: "model", created: 1748736000, owned_by: "qwen", context_window: 131072,
     capabilities: { vision: true, tools: true, json_mode: true, streaming: true } },
@@ -1262,6 +1265,103 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
       res.json({ id, object: "chat.completion", created, model: _rawModel, service_tier: "default", system_fingerprint: "fp_algochat_gateway",
         choices: [{ index: 0, message: { role: "assistant", refusal: null, content: acContent }, logprobs: null, finish_reason: acFinish }],
         usage: acUsage });
+      return;
+    }
+
+    // ── Blackbox AI provider path ────────────────────────────────────────────
+    if (isBlackboxModel(model)) {
+      const bbEffective = hasImages ? await flattenVisionMessages(effectiveMessages) : effectiveMessages;
+      const bbMessages = bbEffective.map(m => ({
+        role: m.role,
+        content: typeof m.content === "string" ? m.content : getMessageText(m.content),
+      }));
+
+      if (stream) {
+        startSSE();
+
+        let bbCollected = "";
+        let bbStreamErr = "";
+        try {
+          for await (const token of blackboxStream(bbMessages, model)) {
+            if (token) bbCollected += token;
+          }
+        } catch (err: unknown) {
+          bbStreamErr = err instanceof Error ? err.message : String(err);
+          logger.warn({ err }, "blackbox: stream error");
+        }
+        if (bbStreamErr && !bbCollected) {
+          res.write(`data: ${JSON.stringify({ error: { message: bbStreamErr, type: "upstream_error", code: "blackbox_error" } })}\n\n`);
+          res.write("data: [DONE]\n\n");
+          res.end();
+          return;
+        }
+
+        const bbSsMt = applyMaxTokens(bbCollected, _max);
+        const bbSsSt = applyStop(bbSsMt.content, _stop);
+        const bbFinalText = bbSsSt.content;
+        const bbStreamFinish = (bbSsMt.truncated || bbSsSt.truncated) ? "length" : "stop";
+        const bbPromptEst = estimateTokens(messagesToPrompt(bbMessages));
+        const bbOutEst = Math.round(bbFinalText.length / 4);
+
+        if (hasTools) {
+          const bbStreamToolCalls = detectToolCalls(bbFinalText);
+          if (bbStreamToolCalls) {
+            res.write(sseChunk({ role: "assistant", content: null }));
+            for (let i = 0; i < bbStreamToolCalls.length; i++) {
+              const tc = bbStreamToolCalls[i];
+              res.write(sseChunk({ tool_calls: [{ index: i, id: tc.id, type: "function", function: { name: tc.function.name, arguments: "" } }] }));
+              const args = tc.function.arguments;
+              for (let j = 0; j < args.length; j += 20) {
+                res.write(sseChunk({ tool_calls: [{ index: i, function: { arguments: args.slice(j, j + 20) } }] }));
+              }
+            }
+            if (includeUsage) res.write(sseUsageChunk(bbPromptEst, bbOutEst));
+            res.write(sseChunk({}, "tool_calls"));
+            res.write("data: [DONE]\n\n");
+            res.end();
+            return;
+          }
+        }
+
+        res.write(sseChunk({ role: "assistant", content: "" }));
+        for (const w of bbFinalText.split(/(\s+)/)) {
+          if (w) res.write(sseChunk({ content: w }));
+        }
+        if (includeUsage) res.write(sseUsageChunk(bbPromptEst, bbOutEst));
+        res.write(sseChunk({}, bbStreamFinish));
+        res.write("data: [DONE]\n\n");
+        res.end();
+        return;
+      }
+
+      let bbRaw: string, bbIn: number, bbOut: number;
+      try {
+        ({ content: bbRaw, inputTokens: bbIn, outputTokens: bbOut } = await blackboxChat(bbMessages, model));
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.warn({ err }, "blackbox: chat error");
+        res.status(502).json({ error: { message: msg, type: "upstream_error", code: "blackbox_error" } });
+        return;
+      }
+      if (!bbRaw!) {
+        res.status(502).json({ error: { message: "No response from Blackbox AI", type: "upstream_error", code: "empty_response" } });
+        return;
+      }
+      const bbMt = applyMaxTokens(bbRaw, _max);
+      const bbSt = applyStop(bbMt.content, _stop);
+      const bbContent = bbSt.content;
+      const bbFinish = (bbMt.truncated || bbSt.truncated) ? "length" : "stop";
+      const bbUsage = { prompt_tokens: bbIn, completion_tokens: bbOut, total_tokens: bbIn + bbOut, prompt_tokens_details: { cached_tokens: 0, audio_tokens: 0 }, completion_tokens_details: { reasoning_tokens: 0, audio_tokens: 0, accepted_prediction_tokens: 0, rejected_prediction_tokens: 0 } };
+      const bbToolCalls = hasTools ? detectToolCalls(bbContent) : null;
+      if (bbToolCalls) {
+        res.json({ id, object: "chat.completion", created, model: _rawModel, service_tier: "default", system_fingerprint: "fp_blackbox_gateway",
+          choices: [{ index: 0, message: { role: "assistant", refusal: null, content: null, tool_calls: bbToolCalls }, logprobs: null, finish_reason: "tool_calls" }],
+          usage: bbUsage });
+        return;
+      }
+      res.json({ id, object: "chat.completion", created, model: _rawModel, service_tier: "default", system_fingerprint: "fp_blackbox_gateway",
+        choices: [{ index: 0, message: { role: "assistant", refusal: null, content: bbContent }, logprobs: null, finish_reason: bbFinish }],
+        usage: bbUsage });
       return;
     }
 
