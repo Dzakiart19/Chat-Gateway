@@ -33,6 +33,13 @@ const WORKING_MODELS = [
   // ── AlgoChat (Gemini 3 Flash Preview via algochat.app guest session) ──
   { id: "algochat",             label: "algochat (Gemini 3 Flash Preview)", group: "AlgoChat" },
   { id: "gemini-3-flash-preview", label: "gemini-3-flash-preview", group: "AlgoChat" },
+  // ── Blackbox AI (session cookie optional, premium required for non-default) ──
+  { id: "blackboxai",           label: "blackboxai (default)", group: "Blackbox AI" },
+  { id: "blackbox-claude",      label: "blackbox-claude (Claude Sonnet)", group: "Blackbox AI" },
+  { id: "blackbox-gpt4",        label: "blackbox-gpt4 (GPT-4o)", group: "Blackbox AI" },
+  { id: "blackbox-deepseek-r1", label: "blackbox-deepseek-r1 (DeepSeek R1)", group: "Blackbox AI" },
+  { id: "blackbox-llama",       label: "blackbox-llama (Llama 3.1 70B)", group: "Blackbox AI" },
+  { id: "blackbox-qwen",        label: "blackbox-qwen (Qwen 2.5 Coder)", group: "Blackbox AI" },
 ];
 
 const MODEL_GROUPS = [...new Set(WORKING_MODELS.map(m => m.group))];
