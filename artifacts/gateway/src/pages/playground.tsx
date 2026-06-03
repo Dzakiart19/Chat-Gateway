@@ -33,6 +33,11 @@ const WORKING_MODELS = [
   // ── AlgoChat (Gemini 3 Flash Preview via algochat.app guest session) ──
   { id: "algochat",             label: "algochat (Gemini 3 Flash Preview)", group: "AlgoChat" },
   { id: "gemini-3-flash-preview", label: "gemini-3-flash-preview", group: "AlgoChat" },
+  // ── ChatAIBot (Claude/DeepSeek/GPT via chataibot.pro promo-chat, no auth) ──
+  { id: "chataibot-claude-haiku",  label: "chataibot-claude-haiku (Claude Haiku 4.5)",  group: "ChatAIBot" },
+  { id: "chataibot-claude-sonnet", label: "chataibot-claude-sonnet (Claude Sonnet 4.5)", group: "ChatAIBot" },
+  { id: "chataibot-deepseek-r1",   label: "chataibot-deepseek-r1 (DeepSeek R1)",         group: "ChatAIBot" },
+  { id: "chataibot-gpt4-nano",     label: "chataibot-gpt4-nano (GPT-4.1 nano)",          group: "ChatAIBot" },
 ];
 
 const MODEL_GROUPS = [...new Set(WORKING_MODELS.map(m => m.group))];
