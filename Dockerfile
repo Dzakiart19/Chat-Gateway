@@ -41,6 +41,9 @@ RUN cp -r ./artifacts/gateway/dist/public ./artifacts/api-server/dist/public
 FROM node:22-alpine AS runner
 WORKDIR /app
 
+# curl is required by AI provider helpers (execSync curl)
+RUN apk add --no-cache curl
+
 ENV NODE_ENV=production
 ENV PORT=8000
 
