@@ -12,9 +12,7 @@ const MODELS = [
   { id: "qwen3.6-max-preview",        label: "Qwen3.6 Max Preview", badge: "Preview"    },
   { id: "qwen3-235b-a22b",            label: "Qwen3 235B-A22B",     badge: "235B"       },
   { id: "qwen3-30b-a3b",              label: "Qwen3 30B-A3B",       badge: "Fast"       },
-  { id: "qwen-max-latest",            label: "Qwen Max Latest",     badge: "Latest"     },
-  { id: "qwen-turbo-latest",          label: "Qwen Turbo",          badge: "Turbo"      },
-  { id: "qwen2.5-coder-32b-instruct", label: "Qwen2.5 Coder 32B",  badge: "Code"       },
+  { id: "minimax-m3",                  label: "MiniMax M3",          badge: "Thinking"   },
 ];
 
 const FEATURES = [

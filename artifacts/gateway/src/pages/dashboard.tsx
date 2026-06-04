@@ -312,7 +312,7 @@ export default function Dashboard() {
 
             <div className="bg-muted/60 border border-border rounded-lg p-4 space-y-1.5">
               <div className="font-semibold text-foreground text-xs uppercase tracking-wider mb-2">Available models</div>
-              {["qwen3.7-max","qwen3.6-plus","qwen3.6-max-preview","qwen3-235b-a22b","qwen3-30b-a3b","qwen-max-latest","qwen-turbo-latest","qwen2.5-coder-32b-instruct"].map(m => (
+              {["qwen3.7-max","qwen3.6-plus","qwen3.6-max-preview","qwen3-235b-a22b","qwen3-30b-a3b","minimax-m3","minimax-m2.7","kimi-k2","command-a"].map(m => (
                 <div key={m} className="flex items-center gap-2">
                   <div className="w-1.5 h-1.5 rounded-full bg-muted-foreground/50 shrink-0" />
                   <code className="text-xs font-mono text-foreground">{m}</code>

@@ -618,12 +618,6 @@ const MODELS: ModelEntry[] = [
     capabilities: { vision: true, tools: true, json_mode: true, streaming: true } },
   { id: "qwen3-30b-a3b",               object: "model", created: 1746489600, owned_by: "qwen", context_window: 131072,
     capabilities: { vision: true, tools: true, json_mode: true, streaming: true } },
-  { id: "qwen-max-latest",             object: "model", created: 1746489600, owned_by: "qwen", context_window: 32768,
-    capabilities: { vision: true, tools: true, json_mode: true, streaming: true } },
-  { id: "qwen-turbo-latest",           object: "model", created: 1746489600, owned_by: "qwen", context_window: 131072,
-    capabilities: { vision: true, tools: true, json_mode: true, streaming: true } },
-  { id: "qwen2.5-coder-32b-instruct",  object: "model", created: 1730419200, owned_by: "qwen", context_window: 131072,
-    capabilities: { vision: false, tools: true, json_mode: true, streaming: true } },
   // Dedicated vision model aliases
   { id: "qwen-vl-max-latest",          object: "model", created: 1748736000, owned_by: "qwen", context_window: 131072,
     capabilities: { vision: true, tools: true, json_mode: true, streaming: true } },
@@ -634,14 +628,16 @@ const MODELS: ModelEntry[] = [
 const MODEL_ALIASES: Record<string, string> = {
   // qwen-max family
   "qwen-max":              "qwen3.7-max",
+  "qwen-max-latest":       "qwen3.7-max",
   "qwen-max-0919":         "qwen3.7-max",
   // qwen-plus family
   "qwen-plus":             "qwen3.6-plus",
   "qwen-plus-latest":      "qwen3.6-plus",
   "qwen-plus-0723":        "qwen3.6-plus",
   // qwen-turbo family
-  "qwen-turbo":            "qwen-turbo-latest",
-  "qwen-turbo-0919":       "qwen-turbo-latest",
+  "qwen-turbo":            "qwen3-30b-a3b",
+  "qwen-turbo-latest":     "qwen3-30b-a3b",
+  "qwen-turbo-0919":       "qwen3-30b-a3b",
   // qwen-long
   "qwen-long":             "qwen3.6-plus",
   // qwq / reasoning
@@ -660,9 +656,10 @@ const MODEL_ALIASES: Record<string, string> = {
   "qwen2.5-14b-instruct":  "qwen3-30b-a3b",
   "qwen2.5-32b-instruct":  "qwen3-235b-a22b",
   "qwen2.5-72b-instruct":  "qwen3-235b-a22b",
-  // qwen2.5-coder small sizes
-  "qwen2.5-coder-7b-instruct":  "qwen2.5-coder-32b-instruct",
-  "qwen2.5-coder-14b-instruct": "qwen2.5-coder-32b-instruct",
+  // qwen2.5-coder → route to working qwen3 model
+  "qwen2.5-coder-32b-instruct":  "qwen3-235b-a22b",
+  "qwen2.5-coder-7b-instruct":   "qwen3-30b-a3b",
+  "qwen2.5-coder-14b-instruct":  "qwen3-30b-a3b",
   // Vision model aliases — vision is handled via OSS image upload, not model ID.
   // Map all VL/vision model IDs to working chat.qwen.ai text models.
   "qwen-vl-max":            "qwen3.7-max",
