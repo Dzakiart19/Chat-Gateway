@@ -301,6 +301,20 @@ curl -s -X POST "https://target.ai/ENDPOINT" \
 - **Payload:** `{ message, images:[], history:[{type, content}] }`
 - **Models:** `gptfree`
 
+### 8. Kimi (Moonshot AI via Connect RPC)
+- **File:** `artifacts/api-server/src/lib/kimi-provider.ts`
+- **Auth:** JWT dari `kimi-auth` cookie → simpan di `KIMI_TOKEN` env var. Parse field `sub`, `device_id`, `ssid` dari JWT untuk headers.
+- **Endpoint:** `POST https://www.kimi.com/apiv2/kimi.gateway.chat.v1.ChatService/Chat`
+- **Protocol:** Connect RPC binary framing — request dan response WAJIB pakai 5-byte envelope (1 byte flags + 4 byte length BE + JSON body)
+- **Vision:** ⚡ Fallback via `flattenVisionMessages()`
+- **Tools:** ✅ Via prompt injection
+- **Streaming:** ✅ AsyncGenerator — parse Connect RPC frames dari reader loop, yield tiap token saat tiba
+- **Models:** `kimi-k2`, `kimi-search`, `kimi-research`
+- **Scenarios:** `SCENARIO_K2` (default), `SCENARIO_SEARCH`, `SCENARIO_RESEARCH`, `SCENARIO_K1`
+- **⚠️ LIMITASI PENTING — Web Search via kimi-search/kimi-research:**
+  Saat kamu chat langsung di kimi.com, backend Kimi mendeteksi tag `<search>`, mengeksekusi web search server-side, lalu hasilnya dikembalikan ke model (hasil akurat + real-time). Via Connect RPC langsung, infrastruktur search ini **tidak dijalankan** — model hanya output tag `<search>` / `<<tool>web_search</tool>` sebagai teks, lalu menjawab berdasarkan training knowledge (bukan data real-time).
+  **Solusi:** `cleanKimiOutput()` di `kimi-provider.ts` otomatis strip semua internal tags (`<search>`, `<<tool>`, `<<query>`, dll) agar output tetap bersih. Tapi datanya tetap dari training, bukan web search nyata.
+
 ---
 
 ## Standar Interface Wajib — SEMUA Provider HARUS Sama

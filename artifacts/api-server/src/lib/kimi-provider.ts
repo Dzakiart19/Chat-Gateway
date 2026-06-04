@@ -103,6 +103,34 @@ async function fetchKimiStream(
   return res;
 }
 
+/**
+ * Strip Kimi-internal XML tags that appear in output when search/research
+ * scenarios are used but execute server-side (not visible via Connect RPC).
+ * e.g. <search>...</search>, <search_quality_reflection>...</search_quality_reflection>
+ */
+export function cleanKimiOutput(text: string): string {
+  return text
+    // Block tags (multi-line)
+    .replace(/<search>[\s\S]*?<\/search>/gi, "")
+    .replace(/<search_quality_reflection>[\s\S]*?<\/search_quality_reflection>/gi, "")
+    .replace(/<search_quality_score>[\s\S]*?<\/search_quality_score>/gi, "")
+    .replace(/<references>[\s\S]*?<\/references>/gi, "")
+    .replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, "")
+    .replace(/<tool_response>[\s\S]*?<\/tool_response>/gi, "")
+    // Inline tags Kimi emits for search/tool (various malformed formats)
+    // e.g. <<tool>web_search</tool>, <<query>..., <query>...
+    .replace(/<<tool>[^<]*<\/tool>\s*/gi, "")
+    .replace(/<<query>[^\n]*\n?/gi, "")
+    .replace(/<query>[^\n]*\n?/gi, "")
+    .replace(/<tool>[^<]*<\/tool>\s*/gi, "")
+    // Strip any remaining lone XML-style internal tags on their own line
+    .replace(/^<\/?(?:search|query|tool|references|search_quality\w*)[^>]*>\s*$/gim, "")
+    // Clean up excess blank lines left behind
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/^\n+/, "")
+    .trim();
+}
+
 // ── Streaming — proper AsyncGenerator<string>, yields tokens as they arrive ──
 export async function* kimiStream(
   messages: ChatMessage[],
@@ -164,7 +192,7 @@ export async function kimiChat(
   for await (const token of kimiStream(messages, model)) {
     content += token;
   }
-  const trimmed = content.trim();
+  const trimmed = cleanKimiOutput(content);
   const inputEst = Math.round(messages.map(m => m.content).join("").length / 4);
   const outputEst = Math.round(trimmed.length / 4);
   logger.info({ model, chars: trimmed.length }, "kimi: chat complete");

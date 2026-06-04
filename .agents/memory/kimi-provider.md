@@ -70,3 +70,11 @@ Response uses HTTP chunked transfer encoding wrapping Connect frames. Node.js fe
 - `buildPrompt` handles `role: "tool"` messages explicitly (not silently coerced to "user")
 
 **Why this matters:** The callback-based approach (`kimiStreamTokens`) could not be used in `for await` loops, so v1.ts had a one-off non-standard integration that would break if the standard streaming path was refactored.
+
+## Web Search Limitation (kimi-search / kimi-research)
+
+`kimi-search` and `kimi-research` (SCENARIO_SEARCH / SCENARIO_RESEARCH) do **NOT** execute real web searches via Connect RPC. When chatting directly on kimi.com, Kimi's backend infrastructure intercepts `<search>` tags and runs actual searches. Via our Connect RPC endpoint, this infrastructure layer is bypassed — the model outputs `<search>`, `<<tool>web_search</tool>`, `<<query>` etc. as literal text, then answers from training knowledge only.
+
+**Fix:** `cleanKimiOutput()` in `kimi-provider.ts` strips all these internal tags (multiple format variants observed: `<search>`, `<<tool>`, `<<query>`, block XML variants) from the output. Applied in both `kimiChat` (non-streaming) and in v1.ts on `kmCollected` (streaming path).
+
+**Result:** Output is clean text without internal tags, but data remains training-based, not real-time.

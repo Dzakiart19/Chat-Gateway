@@ -12,7 +12,7 @@ import { perplexityChat, perplexityStream, isPerplexityModel, PERPLEXITY_MODELS 
 import { gptfreeChat, gptfreeStream, isGptfreeModel, GPTFREE_MODELS } from "../lib/gptfree-provider";
 import { algochatChat, algochatStream, isAlgochatModel, ALGOCHAT_MODELS } from "../lib/algochat-provider";
 import { chataibot, chataibotStream, isChataibot, CHATAIBOT_MODELS } from "../lib/chataibot-provider";
-import { kimiChat, kimiStream, isKimiModel, KIMI_MODELS } from "../lib/kimi-provider";
+import { kimiChat, kimiStream, isKimiModel, KIMI_MODELS, cleanKimiOutput } from "../lib/kimi-provider";
 
 const router = Router();
 
@@ -1379,6 +1379,7 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
         } catch (err: unknown) {
           logger.warn({ err }, "kimi: stream error");
         }
+        kmCollected = cleanKimiOutput(kmCollected);
 
         const kmSsMt = applyMaxTokens(kmCollected, _max);
         const kmSsSt = applyStop(kmSsMt.content, _stop);
