@@ -13,7 +13,10 @@ const WORKING_MODELS = [
   { id: "qwen3-7b",         label: "qwen3-7b", group: "Qwen" },
   { id: "qwen3-4b",         label: "qwen3-4b", group: "Qwen" },
   { id: "qwen-plus-latest", label: "qwen-plus-latest", group: "Qwen" },
-  { id: "minimax-m3",       label: "minimax-m3", group: "MiniMax" },
+  { id: "minimax-m3",             label: "minimax-m3 (MiniMax M3 Thinking)",       group: "MiniMax" },
+  { id: "minimax-m3-thinking",    label: "minimax-m3-thinking",                    group: "MiniMax" },
+  { id: "minimax-m2.7",           label: "minimax-m2.7 (MiniMax M2.7)",            group: "MiniMax" },
+  { id: "minimax-m2.7-highspeed", label: "minimax-m2.7-highspeed (M2.7 HighSpeed)", group: "MiniMax" },
   { id: "qwen3.7-max",      label: "qwen3.7-max", group: "Qwen" },
   // ── Opera Aria (unlimited via anonymous session) ──
   { id: "aria",             label: "aria (Opera Aria)", group: "Opera" },
