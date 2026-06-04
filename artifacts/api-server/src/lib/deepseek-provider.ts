@@ -231,7 +231,7 @@ export async function* deepseekStream(
     }),
   });
 
-  logger.info({ status: resp.status, sessionId }, "deepseek: chat response");
+  logger.debug({ status: resp.status, sessionId }, "deepseek: chat response");
   if (!resp.ok) {
     const err = await resp.text();
     throw new Error(`deepseek: chat ${resp.status}: ${err.slice(0, 300)}`);
@@ -356,7 +356,7 @@ export async function* deepseekStream(
     reader.releaseLock();
   }
 
-  logger.info({ model, sessionId, totalChunks, inContent }, "deepseek: stream complete");
+  logger.debug({ model, sessionId, totalChunks, inContent }, "deepseek: stream complete");
 }
 
 // ── Non-streaming ─────────────────────────────────────────────────────────────
