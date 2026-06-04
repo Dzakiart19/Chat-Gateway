@@ -232,12 +232,15 @@ export async function* cohereStream(
 export async function cohereChat(
   messages: ChatMessage[],
   model = "command-a-03-2025",
-): Promise<{ content: string }> {
+): Promise<{ content: string; inputTokens: number; outputTokens: number }> {
   let content = "";
   for await (const token of cohereStream(messages, model)) {
     content += token;
   }
-  return { content: content.trim() };
+  const trimmed = content.trim();
+  const inputEst = Math.round(messages.map(m => m.content).join("").length / 4);
+  const outputEst = Math.round(trimmed.length / 4);
+  return { content: trimmed, inputTokens: inputEst, outputTokens: outputEst };
 }
 
 export const COHERE_MODELS = [

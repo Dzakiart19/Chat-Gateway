@@ -1083,7 +1083,7 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
         return;
       }
 
-      const { content: coRaw } = await cohereChat(cohereMessages, cohereModel);
+      const { content: coRaw, inputTokens: coIn, outputTokens: coOut } = await cohereChat(cohereMessages, cohereModel);
       if (!coRaw) {
         res.status(502).json({ error: { message: "No response from Cohere", type: "upstream_error", code: "empty_response" } });
         return;
@@ -1092,9 +1092,7 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
       const coSt = applyStop(coMt.content, _stop);
       const coContent = coSt.content;
       const coFinish = (coMt.truncated || coSt.truncated) ? "length" : "stop";
-      const coPromptTokens = estimateTokens(messagesToPrompt(cohereMessages));
-      const coCompTokens = estimateTokens(coContent);
-      const coUsage = { prompt_tokens: coPromptTokens, completion_tokens: coCompTokens, total_tokens: coPromptTokens + coCompTokens, prompt_tokens_details: { cached_tokens: 0, audio_tokens: 0 }, completion_tokens_details: { reasoning_tokens: 0, audio_tokens: 0, accepted_prediction_tokens: 0, rejected_prediction_tokens: 0 } };
+      const coUsage = { prompt_tokens: coIn, completion_tokens: coOut, total_tokens: coIn + coOut, prompt_tokens_details: { cached_tokens: 0, audio_tokens: 0 }, completion_tokens_details: { reasoning_tokens: 0, audio_tokens: 0, accepted_prediction_tokens: 0, rejected_prediction_tokens: 0 } };
       const toolCalls = hasTools ? detectToolCalls(coContent) : null;
       if (toolCalls) {
         res.json({ id, object: "chat.completion", created, model: _rawModel, service_tier: "default", system_fingerprint: "fp_cohere_gateway",
@@ -1452,7 +1450,8 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
 
     // ── MiniMax provider path (MiniMax-M3 / M2.7 via agent.minimax.io) ─────
     if (isMinimaxModel(model)) {
-      const mmMessages = effectiveMessages.map(m => ({
+      const mmEffective = hasImages ? await flattenVisionMessages(effectiveMessages) : effectiveMessages;
+      const mmMessages = mmEffective.map(m => ({
         role: m.role,
         content: typeof m.content === "string" ? m.content : getMessageText(m.content),
       }));
