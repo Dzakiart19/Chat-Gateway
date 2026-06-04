@@ -8,7 +8,10 @@ const BASE = "https://agent.minimax.io";
 const ARCHON = "/archon/api/v1";
 const SIGN_SALT = "I*7Cf%WZ#S&%1RlZJ&C2";
 
-// Fixed device fingerprint (matches what the server validated against)
+// Default agent ID (Mavis — the built-in MiniMax assistant)
+const DEFAULT_AGENT = "405559239626914";
+
+// Fixed device fingerprint validated by server
 const DEVICE = {
   uuid: "c451c3b9-3de8-4545-9ba9-72bbb241054f",
   device_id: "23492706",
@@ -20,20 +23,14 @@ const DEVICE = {
 interface ModelInfo { model_id: string; variant?: string; }
 
 export const MINIMAX_MODELS: Record<string, ModelInfo> = {
-  "minimax-m3":             { model_id: "MiniMax-M3",           variant: "thinking" },
-  "minimax-m3-thinking":    { model_id: "MiniMax-M3",           variant: "thinking" },
-  "minimax-m2.7":           { model_id: "MiniMax-M2.7",         variant: "" },
+  "minimax-m3":             { model_id: "MiniMax-M3",             variant: "thinking" },
+  "minimax-m3-thinking":    { model_id: "MiniMax-M3",             variant: "thinking" },
+  "minimax-m2.7":           { model_id: "MiniMax-M2.7",           variant: "" },
   "minimax-m2.7-highspeed": { model_id: "MiniMax-M2.7-highspeed", variant: "" },
 };
 
 export function isMinimaxModel(model: string): boolean {
-  const normalized = model.toLowerCase();
-  return (
-    normalized.startsWith("minimax-") ||
-    normalized === "minimax-m3" ||
-    normalized === "minimax-m2.7" ||
-    normalized === "minimax-m2.7-highspeed"
-  );
+  return model.toLowerCase().startsWith("minimax-");
 }
 
 function md5(s: string): string {
@@ -44,14 +41,13 @@ function resolveModel(model: string): ModelInfo {
   return MINIMAX_MODELS[model.toLowerCase()] ?? { model_id: "MiniMax-M3", variant: "thinking" };
 }
 
-function buildQueryString(tsSec: number, token: string): string {
-  const tsMs = tsSec * 1000;
-  const params = new URLSearchParams([
+function buildQS(tsSec: number, token: string): string {
+  return new URLSearchParams([
     ["device_platform", "web"],
     ["biz_id", "3"],
     ["app_id", "3001"],
     ["version_code", "22201"],
-    ["unix", String(tsMs)],
+    ["unix", String(tsSec * 1000)],
     ["timezone_offset", DEVICE.timezone_offset],
     ["sys_language", "en"],
     ["lang", "en"],
@@ -69,18 +65,17 @@ function buildQueryString(tsSec: number, token: string): string {
     ["token", token],
     ["client", "web"],
     ["region", "en"],
-  ]);
-  return params.toString();
+  ]).toString();
 }
 
-function minimaxHeaders(tsSec: number, body: string, token: string): string {
+function commonHeaders(tsSec: number, body: string, token: string, accept = "application/json"): string {
   const sig = md5(`${tsSec}${SIGN_SALT}${body}`);
   return [
     `-H "token: ${token}"`,
     `-H "x-signature: ${sig}"`,
     `-H "x-timestamp: ${tsSec}"`,
     `-H "Content-Type: application/json"`,
-    `-H "Accept: text/event-stream"`,
+    `-H "Accept: ${accept}"`,
     `-H "Origin: ${BASE}"`,
     `-H "Referer: ${BASE}/"`,
     `-H "User-Agent: Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36"`,
@@ -89,35 +84,59 @@ function minimaxHeaders(tsSec: number, body: string, token: string): string {
 
 function buildPrompt(messages: ChatMessage[]): string {
   if (messages.length === 1) return messages[0].content;
-  const lines: string[] = [];
-  for (const msg of messages) {
-    const role =
-      msg.role === "assistant" ? "Assistant" :
-      msg.role === "system"    ? "System"    :
-      msg.role === "tool"      ? "Tool Result" :
+  return messages
+    .map(m => {
+      const role =
+        m.role === "assistant" ? "Assistant" :
+        m.role === "system"    ? "System"    :
+        m.role === "tool"      ? "Tool Result" :
                                   "User";
-    lines.push(`${role}: ${msg.content}`);
-  }
-  return lines.join("\n\n");
+      return `${role}: ${m.content}`;
+    })
+    .join("\n\n");
 }
 
 function getToken(): string {
-  const token = process.env.MINIMAX_TOKEN;
-  if (!token) throw new Error("MINIMAX_TOKEN env var not set");
-  return token;
+  const t = process.env.MINIMAX_TOKEN;
+  if (!t) throw new Error("MINIMAX_TOKEN env var not set");
+  return t;
 }
 
-function getSessionId(): string {
-  const sid = process.env.MINIMAX_SESSION_ID;
-  if (!sid) throw new Error("MINIMAX_SESSION_ID env var not set");
-  return sid;
+function getAgentName(): string {
+  return process.env.MINIMAX_AGENT_NAME ?? DEFAULT_AGENT;
 }
 
-function curlSSE(sessionId: string, bodyStr: string, token: string): string {
+/** Create a fresh session and return its ID. */
+function createSession(token: string): string {
   const tsSec = Math.floor(Date.now() / 1000);
-  const qs = buildQueryString(tsSec, token);
+  const body = "{}";
+  const agentName = getAgentName();
+  const qs = buildQS(tsSec, token);
+  const url = `${BASE}${ARCHON}/agent/${agentName}/session?${qs}`;
+  const headers = commonHeaders(tsSec, body, token);
+
+  const raw = execSync(
+    `curl -s -X POST "${url}" ${headers} --max-time 15 -d '${body}'`,
+    { maxBuffer: 1 * 1024 * 1024 },
+  ).toString();
+
+  try {
+    const data = JSON.parse(raw) as { session_id?: string; base_resp?: { status_code: number } };
+    if (data.base_resp?.status_code !== 0 || !data.session_id) {
+      throw new Error(`createSession failed: ${raw.slice(0, 200)}`);
+    }
+    return data.session_id;
+  } catch (e) {
+    throw new Error(`MiniMax createSession parse error: ${raw.slice(0, 200)}`);
+  }
+}
+
+/** Send a message to a session and return the full SSE response. */
+function sendMessage(sessionId: string, bodyStr: string, token: string): string {
+  const tsSec = Math.floor(Date.now() / 1000);
+  const qs = buildQS(tsSec, token);
   const url = `${BASE}${ARCHON}/session/${sessionId}/message?${qs}`;
-  const headers = minimaxHeaders(tsSec, bodyStr, token);
+  const headers = commonHeaders(tsSec, bodyStr, token, "text/event-stream");
   const safeBody = bodyStr.replace(/'/g, "'\\''");
 
   return execSync(
@@ -129,22 +148,15 @@ function curlSSE(sessionId: string, bodyStr: string, token: string): string {
 interface MinimaxChunk {
   type: number;
   agent_message_chunk?: {
-    msg_id: string;
-    chunk_index: number;
-    role?: string;
     msg_content?: string;
     thinking_content?: string;
     finish?: boolean;
-    finish_reason?: string;
-    usage?: { input_tokens: number; output_tokens: number; total_tokens: number };
+    usage?: { input_tokens: number; output_tokens: number };
   };
   agent_message?: {
-    msg_id?: string;
     role?: string;
     msg_content?: string;
-    thinking_content?: string;
-    finish_reason?: string;
-    usage?: { input_tokens: number; output_tokens: number; total_tokens: number };
+    usage?: { input_tokens: number; output_tokens: number };
   };
 }
 
@@ -159,25 +171,17 @@ function parseSSE(raw: string): { content: string; inputTokens: number; outputTo
     if (!data) continue;
     try {
       const chunk = JSON.parse(data) as MinimaxChunk;
-
-      // type:6 — streaming chunk
-      if (chunk.type === 6 && chunk.agent_message_chunk) {
-        const c = chunk.agent_message_chunk;
-        // msg_content = actual response (not thinking)
-        if (c.msg_content) content += c.msg_content;
+      if (chunk.type === 6 && chunk.agent_message_chunk?.msg_content) {
+        content += chunk.agent_message_chunk.msg_content;
       }
-
-      // type:2 — final complete message (last one has usage)
-      if (chunk.type === 2 && chunk.agent_message) {
-        const m = chunk.agent_message;
-        if (m.role === "assistant" && m.usage) {
-          inputTokens = m.usage.input_tokens ?? 0;
-          outputTokens = m.usage.output_tokens ?? 0;
-          // If content was not assembled from chunks, use final message
-          if (!content && m.msg_content) content = m.msg_content;
+      if (chunk.type === 2 && chunk.agent_message?.role === "assistant" && chunk.agent_message.usage) {
+        inputTokens = chunk.agent_message.usage.input_tokens ?? 0;
+        outputTokens = chunk.agent_message.usage.output_tokens ?? 0;
+        if (!content && chunk.agent_message.msg_content) {
+          content = chunk.agent_message.msg_content;
         }
       }
-    } catch { /* skip malformed */ }
+    } catch { /* skip */ }
   }
 
   return { content, inputTokens, outputTokens };
@@ -188,22 +192,24 @@ export async function minimaxChat(
   model = "minimax-m3",
 ): Promise<{ content: string; inputTokens: number; outputTokens: number }> {
   const token = getToken();
-  const sessionId = getSessionId();
+
+  // Create a fresh session per request (like Qwen creates a new chat)
+  const sessionId = createSession(token);
+  logger.info({ sessionId, model }, "minimax: created fresh session");
+
   const prompt = buildPrompt(messages);
   const minimaxModel = resolveModel(model);
-
   const bodyStr = JSON.stringify({ content: prompt, model: minimaxModel });
 
-  logger.info({ sessionId, model: minimaxModel }, "minimax: sending request");
-
-  const raw = curlSSE(sessionId, bodyStr, token);
+  const raw = sendMessage(sessionId, bodyStr, token);
   const result = parseSSE(raw);
 
   if (!result.content) {
-    logger.warn({ rawSnippet: raw.slice(0, 300) }, "minimax: empty content in response");
+    logger.warn({ sessionId, rawSnippet: raw.slice(0, 300) }, "minimax: empty content");
     throw new Error("No content in MiniMax response");
   }
 
+  logger.info({ sessionId, inputTokens: result.inputTokens, outputTokens: result.outputTokens }, "minimax: done");
   return result;
 }
 
@@ -211,8 +217,6 @@ export async function* minimaxStream(
   messages: ChatMessage[],
   model = "minimax-m3",
 ): AsyncGenerator<string> {
-  // MiniMax streams through execSync (blocking), then we chunk the result
   const result = await minimaxChat(messages, model);
-  // Simulate streaming by yielding full text in one shot
   if (result.content) yield result.content;
 }
