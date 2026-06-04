@@ -14,6 +14,7 @@ import { algochatChat, algochatStream, isAlgochatModel, ALGOCHAT_MODELS } from "
 import { chataibot, chataibotStream, isChataibot, CHATAIBOT_MODELS } from "../lib/chataibot-provider";
 import { kimiChat, kimiStream, isKimiModel, KIMI_MODELS, cleanKimiOutput } from "../lib/kimi-provider";
 import { minimaxChat, minimaxStream, isMinimaxModel, MINIMAX_MODELS } from "../lib/minimax-provider";
+import { deepseekChat, deepseekStream, isDeepseekModel, DEEPSEEK_MODELS } from "../lib/deepseek-provider";
 
 const router = Router();
 
@@ -607,6 +608,9 @@ const MODELS: ModelEntry[] = [
   ...KIMI_MODELS.map(m => ({ ...m, capabilities: { vision: false, tools: true, json_mode: false, streaming: true }, context_window: 131072 })),
   // MiniMax — MiniMax-M3/M2.7 via agent.minimax.io (requires MINIMAX_TOKEN + MINIMAX_SESSION_ID)
   ...Object.keys(MINIMAX_MODELS).map(id => ({ id, object: "model", created: 1748736000, owned_by: "minimax", capabilities: { vision: false, tools: true, json_mode: false, streaming: true }, context_window: id.startsWith("minimax-m3") ? 450000 : 200000 })),
+  // DeepSeek — official api.deepseek.com (requires DEEPSEEK_API_KEY), OpenAI-compatible
+  { id: "deepseek-chat",     object: "model", created: 1748736000, owned_by: "deepseek", context_window: 65536, capabilities: { vision: false, tools: true, json_mode: true,  streaming: true } },
+  { id: "deepseek-reasoner", object: "model", created: 1748736000, owned_by: "deepseek", context_window: 65536, capabilities: { vision: false, tools: true, json_mode: false, streaming: true } },
   // Qwen text + vision models — all support vision via OSS image upload
   { id: "qwen3.7-max",                 object: "model", created: 1748736000, owned_by: "qwen", context_window: 131072,
     capabilities: { vision: true, tools: true, json_mode: true, streaming: true } },
@@ -660,6 +664,13 @@ const MODEL_ALIASES: Record<string, string> = {
   "qwen2.5-coder-32b-instruct":  "qwen3-235b-a22b",
   "qwen2.5-coder-7b-instruct":   "qwen3-30b-a3b",
   "qwen2.5-coder-14b-instruct":  "qwen3-30b-a3b",
+  // DeepSeek model aliases
+  "deepseek-v3":              "deepseek-chat",
+  "deepseek-v3-0324":         "deepseek-chat",
+  "deepseek-v3-0106":         "deepseek-chat",
+  "deepseek-r1":              "deepseek-reasoner",
+  "deepseek-r1-0528":         "deepseek-reasoner",
+  "deepseek-r1-0320":         "deepseek-reasoner",
   // Vision model aliases — vision is handled via OSS image upload, not model ID.
   // Map all VL/vision model IDs to working chat.qwen.ai text models.
   "qwen-vl-max":            "qwen3.7-max",
@@ -1616,6 +1627,91 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
       res.json({ id, object: "chat.completion", created, model: _rawModel, service_tier: "default", system_fingerprint: "fp_gptfree_gateway",
         choices: [{ index: 0, message: { role: "assistant", refusal: null, content: gfContent }, logprobs: null, finish_reason: gfFinish }],
         usage: gfUsage });
+      return;
+    }
+
+    // ── DeepSeek provider path ───────────────────────────────────────────────
+    if (isDeepseekModel(model)) {
+      const dsEffective = hasImages ? await flattenVisionMessages(effectiveMessages) : effectiveMessages;
+      const dsMessages = dsEffective.map(m => ({
+        role: m.role,
+        content: typeof m.content === "string" ? m.content : getMessageText(m.content),
+      }));
+
+      if (stream) {
+        startSSE();
+
+        let dsCollected = "";
+        try {
+          for await (const token of deepseekStream(dsMessages, model)) {
+            if (token) dsCollected += token;
+          }
+        } catch (err: unknown) {
+          logger.warn({ err }, "deepseek: stream error");
+        }
+
+        const dsSsMt = applyMaxTokens(dsCollected, _max);
+        const dsSsSt = applyStop(dsSsMt.content, _stop);
+        const dsFinalText = dsSsSt.content;
+        const dsStreamFinish = (dsSsMt.truncated || dsSsSt.truncated) ? "length" : "stop";
+        const dsPromptEst = estimateTokens(messagesToPrompt(dsMessages));
+        const dsOutEst = Math.round(dsFinalText.length / 4);
+
+        if (hasTools) {
+          const dsStreamToolCalls = detectToolCalls(dsFinalText);
+          if (dsStreamToolCalls) {
+            res.write(sseChunk({ role: "assistant", content: null }));
+            for (let i = 0; i < dsStreamToolCalls.length; i++) {
+              const tc = dsStreamToolCalls[i];
+              res.write(sseChunk({ tool_calls: [{ index: i, id: tc.id, type: "function", function: { name: tc.function.name, arguments: "" } }] }));
+              const args = tc.function.arguments;
+              for (let j = 0; j < args.length; j += 20) {
+                res.write(sseChunk({ tool_calls: [{ index: i, function: { arguments: args.slice(j, j + 20) } }] }));
+              }
+            }
+            if (includeUsage) res.write(sseUsageChunk(dsPromptEst, dsOutEst));
+            res.write(sseChunk({}, "tool_calls"));
+            res.write("data: [DONE]\n\n");
+            res.end();
+            return;
+          }
+        }
+
+        res.write(sseChunk({ role: "assistant", content: "" }));
+        for (const w of dsFinalText.split(/(\s+)/)) {
+          if (w) res.write(sseChunk({ content: w }));
+        }
+        if (includeUsage) res.write(sseUsageChunk(dsPromptEst, dsOutEst));
+        res.write(sseChunk({}, dsStreamFinish));
+        res.write("data: [DONE]\n\n");
+        res.end();
+        return;
+      }
+
+      const { content: dsRaw, inputTokens: dsIn, outputTokens: dsOut } = await deepseekChat(dsMessages, model);
+      if (!dsRaw) {
+        res.status(502).json({ error: { message: "No response from DeepSeek", type: "upstream_error", code: "empty_response" } });
+        return;
+      }
+      const dsMt = applyMaxTokens(dsRaw, _max);
+      const dsSt = applyStop(dsMt.content, _stop);
+      const dsContent = dsSt.content;
+      const dsFinish = (dsMt.truncated || dsSt.truncated) ? "length" : "stop";
+      const dsUsage = {
+        prompt_tokens: dsIn, completion_tokens: dsOut, total_tokens: dsIn + dsOut,
+        prompt_tokens_details: { cached_tokens: 0, audio_tokens: 0 },
+        completion_tokens_details: { reasoning_tokens: 0, audio_tokens: 0, accepted_prediction_tokens: 0, rejected_prediction_tokens: 0 },
+      };
+      const dsToolCalls = hasTools ? detectToolCalls(dsContent) : null;
+      if (dsToolCalls) {
+        res.json({ id, object: "chat.completion", created, model: _rawModel, service_tier: "default", system_fingerprint: "fp_deepseek_gateway",
+          choices: [{ index: 0, message: { role: "assistant", refusal: null, content: null, tool_calls: dsToolCalls }, logprobs: null, finish_reason: "tool_calls" }],
+          usage: dsUsage });
+        return;
+      }
+      res.json({ id, object: "chat.completion", created, model: _rawModel, service_tier: "default", system_fingerprint: "fp_deepseek_gateway",
+        choices: [{ index: 0, message: { role: "assistant", refusal: null, content: dsContent }, logprobs: null, finish_reason: dsFinish }],
+        usage: dsUsage });
       return;
     }
 
