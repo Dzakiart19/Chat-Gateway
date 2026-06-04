@@ -1,0 +1,31 @@
+POST /api/v0/chat/completion HTTP/2
+host: chat.deepseek.com
+content-length: 221
+x-hif-dliq: dX1MLMaIr0Ec/Vk2CoNNc9s2ZHL6wrWJJXrySDb+0NReanSQqpCnhzk=.6ieZ2Zpe7CNtRcJg
+sec-ch-ua: "Chromium";v="137", "Not/A)Brand";v="24"
+x-app-version: 2.0.0
+x-client-version: 2.0.0
+sec-ch-ua-mobile: ?1
+x-client-timezone-offset: 25200
+x-client-platform: web
+authorization: Bearer uAvxVNeVCcPX9DUqauQp6XoFVCtGdlR6QTjzCxWxdRC5bNrsh+Fac78bOeIY63KC
+x-hif-leim: I7mTRHjS18td39FPr+meB5IDFqzJ83DgEnOhDFpwiF3M84S6e6t+p7I=.CyjVN5BXP6RRMLfQ
+accept: */*
+content-type: application/json
+x-client-locale: id
+x-ds-pow-response: eyJhbGdvcml0aG0iOiJEZWVwU2Vla0hhc2hWMSIsImNoYWxsZW5nZSI6IjEyMzYzZmMxNTI5Y2Q5YTAzNzBkOTJhNTZiMjgyMTVkMDBiYTkzOTFkNjlmZTg4YzMwNDVhMWEyOTFlMzdjM2UiLCJzYWx0IjoiOThkNzEyMTM3MjFhOTgxODI1NzMiLCJhbnN3ZXIiOjk4MjMwLCJzaWduYXR1cmUiOiI1NTc1ZWNmMDdjZjQ5YjU5NjBjYzkxYWVlYzVmY2MwOTBhNDk2NjQ3MjhhNjY5YzcwZDk2ZDc3NDIxY2Q1ZmQwIiwidGFyZ2V0X3BhdGgiOiIvYXBpL3YwL2NoYXQvY29tcGxldGlvbiJ9
+user-agent: Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36
+sec-ch-ua-platform: "Android"
+origin: https://chat.deepseek.com
+sec-fetch-site: same-origin
+sec-fetch-mode: cors
+sec-fetch-dest: empty
+referer: https://chat.deepseek.com/a/chat/s/0eecfb30-51a5-467c-b6ae-b74a358bf02a
+accept-encoding: gzip, deflate, br
+accept-language: id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7
+cookie: aws-waf-token=78454b93-960d-4652-ba71-e92838e7536b:BgoAgbY3WCI7AAAA:DXrJ4zg1yXSLRSolhIRBiw9aIWIZSuOPg5gqFuuhKOxzhANW892iiYKXqSoicRgya9jnHerOJIG8D0GPAY3JbUGu2r3zXT0oeI04ap4W/QvnM0/nJ7FSQsYMvF+Cxt+Mpu/nBjFczptYBFjH3RAnaT40WVbkzW8i0dR5U8OAwYr+XhU6xDT0e+7qHD5lWPg=
+cookie: smidV2=202606041500495424443e862b645fe4b75c71fde7d77c00e000b55569e5f40
+cookie: .thumbcache_6b2e5483f9d858d7c661c5e276b6a6ae=EwCx+KlFHomSjIJqPX5xkRXEXBSqdp1IPNLJkerNDVDVoOvaAXOXfHpC3a0QXmx7BlSQJK3s4+K0Cz361xJiLg%3D%3D
+cookie: ds_session_id=7bef77fec39f4581ae601ff5fe3e483f
+
+{"chat_session_id":"0eecfb30-51a5-467c-b6ae-b74a358bf02a","parent_message_id":null,"model_type":"default","prompt":"Lu siapa","ref_file_ids":[],"thinking_enabled":false,"search_enabled":true,"action":null,"preempt":false}
