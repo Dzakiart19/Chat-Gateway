@@ -1,0 +1,29 @@
+GET /cdn-cgi/trace HTTP/2
+host: www.perplexity.ai
+sec-ch-ua: "Chromium";v="137", "Not/A)Brand";v="24"
+sec-ch-ua-mobile: ?1
+user-agent: Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36
+sec-ch-ua-platform: "Android"
+accept: */*
+sec-fetch-site: same-origin
+sec-fetch-mode: cors
+sec-fetch-dest: empty
+referer: https://www.perplexity.ai/search/47a63585-8e73-48c2-b9e5-bb8673e26ede
+accept-encoding: gzip, deflate, br
+accept-language: id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7
+cookie: pplx.visitor-id=ec41df50-12da-411e-8693-e8c48dab6d01
+cookie: pplx.session-id=58ce67ff-0890-4ce3-b739-12cef3f55486
+cookie: __cflb=02DiuDyvFMmK5p9jVbVnMNSKYZhUL9aGmFs7EswKrvHMe
+cookie: cf_clearance=moJR.16MfXR2Ng77nF0m2jhQ4UpqKrKuOZKY90f43eo-1780573397-1.2.1.1-wB5WYOyJzNtXRX1lTPEHiY4s.PmNGLYcLB_0JOFCu8S44Lx1kS9FpOqa5C_wvcCWibR6HEqaXHaCC7.ET4pLwN_CZdF58GiN8v_f_OvUg46krndhV0wexuaM7QXYtaNKgb163Bj.VcO7SXlcaFkWmlraKcdCEvvQoHmUx5eQBbSLZnFfvLOf0q3GXd7AfUD7ZKiYu4l6wW.WJ57.Y0lW0yVKxL0glrPUORhnqbQsqI3wyAFzS4YtjHL4GWCH1Vr9tFPpzuic_D6iNsslRvTSmFS4mtQATF5aUECVSZlFoW6Dvs4fGejTjqAHB8MPuw47mq57ucJEApP07p169veUjQ
+cookie: pplx.edge-vid=b9480c8e-3591-4df7-a865-fa9913166292
+cookie: pplx.edge-sid=2f801275-5f1e-4735-b155-c801a77ff15c
+cookie: pplx.mweb-splash-page-dismissed=true
+cookie: pplx.trackingAllowed=false
+cookie: next-auth.csrf-token=7231e5fb621bdfad845a843db6bed0c06f25ef672a23cc167faae7473e562d12%7C214e06e3e4a9b8258ea9610f61656f60cc86a3f159b0cb530ba7d7bbe32054d3
+cookie: next-auth.state=eyJhbGciOiJkaXIiLCJlbmMiOiJBMjU2R0NNIn0..16S71CNglIkejZdl.WdNbdjflzP-lcQYK_dOyKk32uDyE0DWqcMUyPNvHm6SW6n49-RG2IcY46VxCH5s6ch6474qUmSvueX-smRpI_pk-Y7zWghurq-cgsh_r3nODn2d3ZXaD_f74ehKz1vkfEbWHKFScldhaTJSbG2dYtIniiou8mUx7qxPJwaQMi3eCJZdCZo0xGtPf4gGFWSCwzkGuNUbXNLb3m_U.qp-4vzK-6MDed7jG7AF-Nw
+cookie: __Secure-next-auth.session-token=eyJhbGciOiJkaXIiLCJlbmMiOiJBMjU2R0NNIn0..kU-oX3OrqYB7c1Ct.5PMqtDB9cq0BFwUIoGcSTZytjwY2o6yTK0D7vnKmT9pfPH4_TgYLPqfyr4w18y-VuM6G6vtJlWEebHA9sGe9oN2LSDxDFKLtWcRuUDeD9ap4Y0MNygqPxxuD6aAWxO0eYHAtMnjZ1k4hhiwNIQO0iJPJECoAtrlvwqAXbdfxYXUnb8XSqx9GRWxEpRPG3ql8FfOsECyOINoo4YBYvXk3TGguCFuWJ6N-I2nBHCZToTv3vttNLvo2nkdlDyp_jauo5_Qzu_-IydQYzx30a4MZTYw3Bq2OzvEK9HdZj867x_rJv9eT5qNoAhz3aBE6ClvniTKMkdq4bGAq1Pa95hKuCo0nkO0WZ_eAzTYAgCEQ1g2OZM1pzs6yKRFdiMZ9ptvwGVmyZC08ZC3G7Gs7ycwdQyP_6-dkzLaHMxMXuomQoeN7UWJZBy21v9biac0.DDnw3ZOpnD5MwibnyvxJVQ
+cookie: pplx.visitor-ts=1780573483-eRgLvVNgEu4w9BKjI_mJRlT4-iGRhC00QxSHJhRZ1gE
+cookie: pplx.metadata={%22qc%22:1%2C%22qcu%22:0%2C%22qcm%22:1%2C%22qcc%22:0%2C%22qcco%22:0%2C%22qccol%22:0%2C%22qcdr%22:0%2C%22qcs%22:0%2C%22qcg%22:0%2C%22qcd%22:0%2C%22hli%22:true%2C%22hcga%22:false%2C%22hcds%22:false%2C%22hso%22:true%2C%22hfo%22:false%2C%22hsco%22:false%2C%22hfco%22:false%2C%22hsma%22:false%2C%22hdc%22:false%2C%22hdttb%22:false%2C%22fqa%22:1780573475080%2C%22lqa%22:1780573475080}
+cookie: _dd_s_v2=aid=3260889f-9a90-477e-8938-2cb15c6ef553&id=eac61652-6c38-40d2-a403-e3f97b341148&created=1780573395418&expire=1780574385315&c=0
+cookie: __cf_bm=M6AjpvbC9GKwtGYWPdmbG7yvUU1tHOTgl7dH4qCdICM-1780573485.9326403-1.0.1.1-QneBUGROS7r9SJTPLcpqJ0_7zg1cifIAzj_a1EsxT7jIKX9lqOptQr5T0T21qXJhcm0QJxeBxR4nFlglCIW9NYwaIYS2ytr_TwK4jkZa8_oiXEZ0eYGc5O8dYYNlMyot
+
