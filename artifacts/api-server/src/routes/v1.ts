@@ -13,6 +13,7 @@ import { gptfreeChat, gptfreeStream, isGptfreeModel, GPTFREE_MODELS } from "../l
 import { algochatChat, algochatStream, isAlgochatModel, ALGOCHAT_MODELS } from "../lib/algochat-provider";
 import { chataibot, chataibotStream, isChataibot, CHATAIBOT_MODELS } from "../lib/chataibot-provider";
 import { kimiChat, kimiStream, isKimiModel, KIMI_MODELS, cleanKimiOutput } from "../lib/kimi-provider";
+import { minimaxChat, minimaxStream, isMinimaxModel, MINIMAX_MODELS } from "../lib/minimax-provider";
 
 const router = Router();
 
@@ -604,6 +605,8 @@ const MODELS: ModelEntry[] = [
   ...CHATAIBOT_MODELS.map(m => ({ ...m, capabilities: { vision: false, tools: true, json_mode: false, streaming: true }, context_window: 32768 })),
   // Kimi — Moonshot AI Kimi-K2 via Connect RPC (requires KIMI_TOKEN)
   ...KIMI_MODELS.map(m => ({ ...m, capabilities: { vision: false, tools: true, json_mode: false, streaming: true }, context_window: 131072 })),
+  // MiniMax — MiniMax-M3/M2.7 via agent.minimax.io (requires MINIMAX_TOKEN + MINIMAX_SESSION_ID)
+  ...Object.keys(MINIMAX_MODELS).map(id => ({ id, object: "model", created: 1748736000, owned_by: "minimax", capabilities: { vision: false, tools: true, json_mode: false, streaming: true }, context_window: id.startsWith("minimax-m3") ? 450000 : 200000 })),
   // Qwen text + vision models — all support vision via OSS image upload
   { id: "qwen3.7-max",                 object: "model", created: 1748736000, owned_by: "qwen", context_window: 131072,
     capabilities: { vision: true, tools: true, json_mode: true, streaming: true } },
@@ -1447,6 +1450,94 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
       res.json({ id, object: "chat.completion", created, model: _rawModel, service_tier: "default", system_fingerprint: "fp_kimi_gateway",
         choices: [{ index: 0, message: { role: "assistant", refusal: null, content: kmContent }, logprobs: null, finish_reason: kmFinish }],
         usage: kmUsage });
+      return;
+    }
+
+    // ── MiniMax provider path (MiniMax-M3 / M2.7 via agent.minimax.io) ─────
+    if (isMinimaxModel(model)) {
+      const mmMessages = effectiveMessages.map(m => ({
+        role: m.role,
+        content: typeof m.content === "string" ? m.content : getMessageText(m.content),
+      }));
+
+      if (stream) {
+        startSSE();
+
+        let mmCollected = "";
+        try {
+          for await (const token of minimaxStream(mmMessages, model)) {
+            if (token) mmCollected += token;
+          }
+        } catch (err: unknown) {
+          logger.warn({ err }, "minimax: stream error");
+        }
+
+        const mmSsMt = applyMaxTokens(mmCollected, _max);
+        const mmSsSt = applyStop(mmSsMt.content, _stop);
+        const mmFinalText = mmSsSt.content;
+        const mmStreamFinish = (mmSsMt.truncated || mmSsSt.truncated) ? "length" : "stop";
+        const mmPromptEst = estimateTokens(messagesToPrompt(mmMessages));
+        const mmOutEst = Math.round(mmFinalText.length / 4);
+
+        if (hasTools) {
+          const mmStreamToolCalls = detectToolCalls(mmFinalText);
+          if (mmStreamToolCalls) {
+            res.write(sseChunk({ role: "assistant", content: null }));
+            for (let i = 0; i < mmStreamToolCalls.length; i++) {
+              const tc = mmStreamToolCalls[i];
+              res.write(sseChunk({ tool_calls: [{ index: i, id: tc.id, type: "function", function: { name: tc.function.name, arguments: "" } }] }));
+              const args = tc.function.arguments;
+              for (let j = 0; j < args.length; j += 20) {
+                res.write(sseChunk({ tool_calls: [{ index: i, function: { arguments: args.slice(j, j + 20) } }] }));
+              }
+            }
+            if (includeUsage) res.write(sseUsageChunk(mmPromptEst, mmOutEst));
+            res.write(sseChunk({}, "tool_calls"));
+            res.write("data: [DONE]\n\n");
+            res.end();
+            return;
+          }
+        }
+
+        res.write(sseChunk({ role: "assistant", content: "" }));
+        for (const w of mmFinalText.split(/(\s+)/)) {
+          if (w) res.write(sseChunk({ content: w }));
+        }
+        if (includeUsage) res.write(sseUsageChunk(mmPromptEst, mmOutEst));
+        res.write(sseChunk({}, mmStreamFinish));
+        res.write("data: [DONE]\n\n");
+        res.end();
+        return;
+      }
+
+      let mmResult: { content: string; inputTokens: number; outputTokens: number };
+      try {
+        mmResult = await minimaxChat(mmMessages, model);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "MiniMax upstream error";
+        res.status(502).json({ error: { message: msg, type: "upstream_error", code: "provider_error" } });
+        return;
+      }
+      const { content: mmRaw, inputTokens: mmIn, outputTokens: mmOut } = mmResult;
+      if (!mmRaw) {
+        res.status(502).json({ error: { message: "No response from MiniMax", type: "upstream_error", code: "empty_response" } });
+        return;
+      }
+      const mmMt = applyMaxTokens(mmRaw, _max);
+      const mmSt = applyStop(mmMt.content, _stop);
+      const mmContent = mmSt.content;
+      const mmFinish = (mmMt.truncated || mmSt.truncated) ? "length" : "stop";
+      const mmUsage = { prompt_tokens: mmIn, completion_tokens: mmOut, total_tokens: mmIn + mmOut, prompt_tokens_details: { cached_tokens: 0, audio_tokens: 0 }, completion_tokens_details: { reasoning_tokens: 0, audio_tokens: 0, accepted_prediction_tokens: 0, rejected_prediction_tokens: 0 } };
+      const mmToolCalls = hasTools ? detectToolCalls(mmContent) : null;
+      if (mmToolCalls) {
+        res.json({ id, object: "chat.completion", created, model: _rawModel, service_tier: "default", system_fingerprint: "fp_minimax_gateway",
+          choices: [{ index: 0, message: { role: "assistant", refusal: null, content: null, tool_calls: mmToolCalls }, logprobs: null, finish_reason: "tool_calls" }],
+          usage: mmUsage });
+        return;
+      }
+      res.json({ id, object: "chat.completion", created, model: _rawModel, service_tier: "default", system_fingerprint: "fp_minimax_gateway",
+        choices: [{ index: 0, message: { role: "assistant", refusal: null, content: mmContent }, logprobs: null, finish_reason: mmFinish }],
+        usage: mmUsage });
       return;
     }
 
