@@ -350,7 +350,7 @@ export async function providerChat(
 - `PROVIDER_MODELS` harus di-spread ke `MODELS[]` di v1.ts, bukan hardcoded
 - `isProviderModel` wajib digunakan di v1.ts, bukan `model === "nama"` hardcoded
 
-**Status konsistensi semua provider saat ini (Juni 2025):**
+**Status konsistensi semua provider saat ini (Juni 2026):**
 
 | Provider | `MODELS` export | `isModel()` | `stream(msgs,model)` AsyncGen | `chat(msgs,model)` + tokenCounts |
 |---|---|---|---|---|
@@ -360,6 +360,7 @@ export async function providerChat(
 | **Perplexity** | ✅ `PERPLEXITY_MODELS` | ✅ `isPerplexityModel` | ✅ `perplexityStream` | ✅ `perplexityChat` |
 | **GPTFree** | ✅ `GPTFREE_MODELS` | ✅ `isGptfreeModel` | ✅ `gptfreeStream` | ✅ `gptfreeChat` |
 | **AlgoChat** | ✅ `ALGOCHAT_MODELS` | ✅ `isAlgochatModel` | ✅ `algochatStream` | ✅ `algochatChat` |
+| **Kimi** | ✅ `KIMI_MODELS` | ✅ `isKimiModel` | ✅ `kimiStream` | ✅ `kimiChat` |
 
 ---
 

@@ -59,3 +59,14 @@ Response uses HTTP chunked transfer encoding wrapping Connect frames. Node.js fe
 - Token has expiry (`exp` field in JWT) — rotate when expired
 
 **Why:** The Connect RPC protocol wraps JSON in a 5-byte envelope even when using the JSON codec. The Kimi web app JS (`encodeConnectMessage` in connect-rpc/protocol.ts from dugongyete-ui/ApiAi-Kimi repo) confirmed this pattern. Plain JSON without the envelope always gets `invalid_argument`.
+
+## Interface Compliance (Fixed June 2026)
+`kimiStream` was originally broken — it buffered all tokens via callback then yielded ONE chunk at the end. It also used a separate `kimiStreamTokens` (callback-based) function in v1.ts, violating the standard AsyncGenerator interface.
+
+**Correct pattern now:**
+- `kimiStream` inlines the Connect frame parser directly as an `async function*` — yields each text token as it arrives from the reader loop
+- `kimiChat` uses `for await (const token of kimiStream(...))` internally
+- v1.ts uses `for await (const token of kimiStream(...))` — consistent with all other providers
+- `buildPrompt` handles `role: "tool"` messages explicitly (not silently coerced to "user")
+
+**Why this matters:** The callback-based approach (`kimiStreamTokens`) could not be used in `for await` loops, so v1.ts had a one-off non-standard integration that would break if the standard streaming path was refactored.

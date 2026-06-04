@@ -27,7 +27,14 @@ function parseJwtField(token: string): { userId: string; deviceId: string; sessi
 function buildPrompt(messages: ChatMessage[]): string {
   if (messages.length === 1) return messages[0].content;
   return messages
-    .map(m => `${m.role === "assistant" ? "assistant" : m.role === "system" ? "system" : "user"}:${m.content}`)
+    .map(m => {
+      const role =
+        m.role === "assistant" ? "assistant" :
+        m.role === "system"    ? "system"    :
+        m.role === "tool"      ? "tool"      :
+        "user";
+      return `${role}:${m.content}`;
+    })
     .join("\n");
 }
 
@@ -47,15 +54,15 @@ function kimiHeaders(token: string): Record<string, string> {
     "Origin": BASE_URL,
     "Referer": `${BASE_URL}/`,
     ...(deviceId ? { "X-Msh-Device-Id": deviceId } : {}),
-    ...(userId ? { "X-Traffic-Id": userId } : {}),
+    ...(userId   ? { "X-Traffic-Id": userId }       : {}),
     ...(sessionId ? { "X-Msh-Session-Id": sessionId } : {}),
   };
 }
 
 function resolveScenario(model: string): string {
-  if (model.includes("search")) return "SCENARIO_SEARCH";
+  if (model.includes("search"))   return "SCENARIO_SEARCH";
   if (model.includes("research")) return "SCENARIO_RESEARCH";
-  if (model.includes("k1")) return "SCENARIO_K1";
+  if (model.includes("k1"))       return "SCENARIO_K1";
   return "SCENARIO_K2";
 }
 
@@ -96,7 +103,15 @@ async function fetchKimiStream(
   return res;
 }
 
-async function parseConnectStream(res: Response, onToken: (t: string) => void): Promise<void> {
+// ── Streaming — proper AsyncGenerator<string>, yields tokens as they arrive ──
+export async function* kimiStream(
+  messages: ChatMessage[],
+  model = "kimi-k2",
+): AsyncGenerator<string> {
+  const token = resolveToken();
+  const prompt = buildPrompt(messages);
+  const res = await fetchKimiStream(prompt, model, token);
+
   const reader = res.body!.getReader();
   let buf = Buffer.alloc(0);
 
@@ -125,7 +140,7 @@ async function parseConnectStream(res: Response, onToken: (t: string) => void): 
         }
         const text = msg.block?.text?.content;
         if (text && (msg.op === "set" || msg.op === "append")) {
-          onToken(text);
+          yield text;
         }
         if (msg.done !== undefined) {
           buf = buf.slice(offset);
@@ -140,53 +155,20 @@ async function parseConnectStream(res: Response, onToken: (t: string) => void): 
   }
 }
 
-export async function* kimiStream(
-  messages: ChatMessage[],
-  model = "kimi-k2",
-): AsyncGenerator<string> {
-  const token = resolveToken();
-  const prompt = buildPrompt(messages);
-  const res = await fetchKimiStream(prompt, model, token);
-
-  let buf = "";
-  const FLUSH_EVERY = 4;
-  let count = 0;
-
-  await parseConnectStream(res, (text) => {
-    buf += text;
-    count++;
-    if (count >= FLUSH_EVERY) { count = 0; }
-  });
-
-  if (buf) yield buf;
-}
-
-export async function kimiStreamTokens(
-  messages: ChatMessage[],
-  model = "kimi-k2",
-  onToken: (t: string) => void,
-): Promise<void> {
-  const token = resolveToken();
-  const prompt = buildPrompt(messages);
-  const res = await fetchKimiStream(prompt, model, token);
-  await parseConnectStream(res, onToken);
-}
-
+// ── Non-streaming — uses kimiStream internally ────────────────────────────────
 export async function kimiChat(
   messages: ChatMessage[],
   model = "kimi-k2",
 ): Promise<{ content: string; inputTokens: number; outputTokens: number }> {
-  const token = resolveToken();
-  const prompt = buildPrompt(messages);
-  const res = await fetchKimiStream(prompt, model, token);
-
   let content = "";
-  await parseConnectStream(res, (t) => { content += t; });
-
-  const inputEst = Math.round(prompt.length / 4);
-  const outputEst = Math.round(content.length / 4);
-  logger.info({ model, chars: content.length }, "kimi: chat complete");
-  return { content: content.trim(), inputTokens: inputEst, outputTokens: outputEst };
+  for await (const token of kimiStream(messages, model)) {
+    content += token;
+  }
+  const trimmed = content.trim();
+  const inputEst = Math.round(messages.map(m => m.content).join("").length / 4);
+  const outputEst = Math.round(trimmed.length / 4);
+  logger.info({ model, chars: trimmed.length }, "kimi: chat complete");
+  return { content: trimmed, inputTokens: inputEst, outputTokens: outputEst };
 }
 
 export const KIMI_MODELS = [
