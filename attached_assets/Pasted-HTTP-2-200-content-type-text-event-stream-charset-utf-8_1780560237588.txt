@@ -1,0 +1,157 @@
+HTTP/2 200
+content-type: text/event-stream; charset=utf-8
+date: Thu, 04 Jun 2026 08:02:04 GMT
+x-content-type-options: nosniff
+server: elb
+cache-control: no-cache
+x-ds-sse-heartbeat-timeout-secs: 8
+x-ds-trace-id: bf240158392efd6a35054b7758526d61
+strict-transport-security: max-age=31536000; includeSubDomains; preload
+x-cache: Miss from cloudfront
+via: 1.1 a44df19f276470e4f37ee41f19280220.cloudfront.net (CloudFront)
+x-amz-cf-pop: CGK51-P1
+x-amz-cf-id: 2oACQMrDEyssaJezhZ6ZruIu2nR9EHUvyhP4EI4Z2Moga_mSf6JNgA==
+
+event: ready
+data: {"request_message_id":1,"response_message_id":2,"model_type":"default"}
+
+event: update_session
+data: {"updated_at":1780560125.1214478}
+
+data: {"v":{"response":{"message_id":2,"parent_id":1,"model":"","role":"ASSISTANT","thinking_enabled":false,"ban_edit":false,"ban_regenerate":false,"status":"WIP","incomplete_message":null,"accumulated_token_usage":0,"feedback":null,"inserted_at":1780560125.104425,"search_enabled":true,"fragments":[{"id":2,"type":"RESPONSE","content":"H","references":[],"stage_id":1}],"conversation_mode":"DEFAULT","has_pending_fragment":false,"auto_continue":false,"search_triggered":false}}}
+
+data: {"p":"response/fragments/-1/content","o":"APPEND","v":"alo"}
+
+data: {"v":"!"}
+
+data: {"v":" S"}
+
+data: {"v":"aya"}
+
+data: {"v":" adalah"}
+
+data: {"v":" **"}
+
+data: {"v":"Deep"}
+
+data: {"v":"Se"}
+
+data: {"v":"ek"}
+
+data: {"v":"**,"}
+
+data: {"v":" as"}
+
+data: {"v":"isten"}
+
+data: {"v":" AI"}
+
+data: {"v":" yang"}
+
+data: {"v":" dik"}
+
+data: {"v":"embangkan"}
+
+data: {"v":" oleh"}
+
+data: {"v":" perusahaan"}
+
+data: {"v":" Deep"}
+
+data: {"v":"Se"}
+
+data: {"v":"ek"}
+
+data: {"v":" ("}
+
+data: {"v":"深度"}
+
+data: {"v":"求"}
+
+data: {"v":"索"}
+
+data: {"v":")."}
+
+data: {"v":" S"}
+
+data: {"v":"aya"}
+
+data: {"v":" di"}
+
+data: {"v":" s"}
+
+data: {"v":"ini"}
+
+data: {"v":" untuk"}
+
+data: {"v":" membantu"}
+
+data: {"v":" menj"}
+
+data: {"v":"aw"}
+
+data: {"v":"ab"}
+
+data: {"v":" pert"}
+
+data: {"v":"anyaan"}
+
+data: {"v":","}
+
+data: {"v":" memberikan"}
+
+data: {"v":" informasi"}
+
+data: {"v":","}
+
+data: {"v":" atau"}
+
+data: {"v":" sek"}
+
+data: {"v":"adar"}
+
+data: {"v":" ng"}
+
+data: {"v":"ob"}
+
+data: {"v":"rol"}
+
+data: {"v":" dengan"}
+
+data: {"v":" Anda"}
+
+data: {"v":"."}
+
+data: {"v":" Ada"}
+
+data: {"v":" yang"}
+
+data: {"v":" bisa"}
+
+data: {"v":" saya"}
+
+data: {"v":" b"}
+
+data: {"v":"antu"}
+
+data: {"v":" hari"}
+
+data: {"v":" ini"}
+
+data: {"v":"?"}
+
+data: {"v":" 😊"}
+
+data: {"p":"response","o":"BATCH","v":[{"p":"accumulated_token_usage","v":96},{"p":"quasi_status","v":"FINISHED"}]}
+
+data: {"p":"response/status","o":"SET","v":"FINISHED"}
+
+event: update_session
+data: {"updated_at":1780560126.1935148}
+
+event: title
+data: {"content":"DeepSeek memperkenalkan diri"}
+
+event: close
+data: {"click_behavior":"none","auto_resume":false}
+
