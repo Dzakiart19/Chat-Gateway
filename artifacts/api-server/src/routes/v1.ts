@@ -12,6 +12,7 @@ import { perplexityChat, perplexityStream, isPerplexityModel, PERPLEXITY_MODELS 
 import { gptfreeChat, gptfreeStream, isGptfreeModel, GPTFREE_MODELS } from "../lib/gptfree-provider";
 import { algochatChat, algochatStream, isAlgochatModel, ALGOCHAT_MODELS } from "../lib/algochat-provider";
 import { chataibot, chataibotStream, isChataibot, CHATAIBOT_MODELS } from "../lib/chataibot-provider";
+import { kimiChat, kimiStreamTokens, isKimiModel, KIMI_MODELS } from "../lib/kimi-provider";
 
 const router = Router();
 
@@ -601,6 +602,8 @@ const MODELS: ModelEntry[] = [
   ...ALGOCHAT_MODELS.map(m => ({ ...m, capabilities: { vision: false, tools: true, json_mode: false, streaming: true }, context_window: 1048576 })),
   // ChatAIBot — Claude/DeepSeek/GPT via chataibot.pro promo-chat (no auth, IP rate-limited)
   ...CHATAIBOT_MODELS.map(m => ({ ...m, capabilities: { vision: false, tools: true, json_mode: false, streaming: true }, context_window: 32768 })),
+  // Kimi — Moonshot AI Kimi-K2 via Connect RPC (requires KIMI_TOKEN)
+  ...KIMI_MODELS.map(m => ({ ...m, capabilities: { vision: false, tools: true, json_mode: false, streaming: true }, context_window: 131072 })),
   // Qwen text + vision models — all support vision via OSS image upload
   { id: "qwen3.7-max",                 object: "model", created: 1748736000, owned_by: "qwen", context_window: 131072,
     capabilities: { vision: true, tools: true, json_mode: true, streaming: true } },
@@ -1354,6 +1357,93 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
       res.json({ id, object: "chat.completion", created, model: _rawModel, service_tier: "default", system_fingerprint: "fp_chataibot_gateway",
         choices: [{ index: 0, message: { role: "assistant", refusal: null, content: cbContent }, logprobs: null, finish_reason: cbFinish }],
         usage: cbUsage });
+      return;
+    }
+
+    // ── Kimi provider path (Moonshot AI Kimi-K2 via Connect RPC) ────────────
+    if (isKimiModel(model)) {
+      const kmEffective = hasImages ? await flattenVisionMessages(effectiveMessages) : effectiveMessages;
+      const kmMessages = kmEffective.map(m => ({
+        role: m.role,
+        content: typeof m.content === "string" ? m.content : getMessageText(m.content),
+      }));
+
+      if (stream) {
+        startSSE();
+
+        let kmCollected = "";
+        try {
+          await kimiStreamTokens(kmMessages, model, (token) => { kmCollected += token; });
+        } catch (err: unknown) {
+          logger.warn({ err }, "kimi: stream error");
+        }
+
+        const kmSsMt = applyMaxTokens(kmCollected, _max);
+        const kmSsSt = applyStop(kmSsMt.content, _stop);
+        const kmFinalText = kmSsSt.content;
+        const kmStreamFinish = (kmSsMt.truncated || kmSsSt.truncated) ? "length" : "stop";
+        const kmPromptEst = estimateTokens(messagesToPrompt(kmMessages));
+        const kmOutEst = Math.round(kmFinalText.length / 4);
+
+        if (hasTools) {
+          const kmStreamToolCalls = detectToolCalls(kmFinalText);
+          if (kmStreamToolCalls) {
+            res.write(sseChunk({ role: "assistant", content: null }));
+            for (let i = 0; i < kmStreamToolCalls.length; i++) {
+              const tc = kmStreamToolCalls[i];
+              res.write(sseChunk({ tool_calls: [{ index: i, id: tc.id, type: "function", function: { name: tc.function.name, arguments: "" } }] }));
+              const args = tc.function.arguments;
+              for (let j = 0; j < args.length; j += 20) {
+                res.write(sseChunk({ tool_calls: [{ index: i, function: { arguments: args.slice(j, j + 20) } }] }));
+              }
+            }
+            if (includeUsage) res.write(sseUsageChunk(kmPromptEst, kmOutEst));
+            res.write(sseChunk({}, "tool_calls"));
+            res.write("data: [DONE]\n\n");
+            res.end();
+            return;
+          }
+        }
+
+        res.write(sseChunk({ role: "assistant", content: "" }));
+        for (const w of kmFinalText.split(/(\s+)/)) {
+          if (w) res.write(sseChunk({ content: w }));
+        }
+        if (includeUsage) res.write(sseUsageChunk(kmPromptEst, kmOutEst));
+        res.write(sseChunk({}, kmStreamFinish));
+        res.write("data: [DONE]\n\n");
+        res.end();
+        return;
+      }
+
+      let kmResult: { content: string; inputTokens: number; outputTokens: number };
+      try {
+        kmResult = await kimiChat(kmMessages, model);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "Kimi upstream error";
+        res.status(502).json({ error: { message: msg, type: "upstream_error", code: "provider_error" } });
+        return;
+      }
+      const { content: kmRaw, inputTokens: kmIn, outputTokens: kmOut } = kmResult;
+      if (!kmRaw) {
+        res.status(502).json({ error: { message: "No response from Kimi", type: "upstream_error", code: "empty_response" } });
+        return;
+      }
+      const kmMt = applyMaxTokens(kmRaw, _max);
+      const kmSt = applyStop(kmMt.content, _stop);
+      const kmContent = kmSt.content;
+      const kmFinish = (kmMt.truncated || kmSt.truncated) ? "length" : "stop";
+      const kmUsage = { prompt_tokens: kmIn, completion_tokens: kmOut, total_tokens: kmIn + kmOut, prompt_tokens_details: { cached_tokens: 0, audio_tokens: 0 }, completion_tokens_details: { reasoning_tokens: 0, audio_tokens: 0, accepted_prediction_tokens: 0, rejected_prediction_tokens: 0 } };
+      const kmToolCalls = hasTools ? detectToolCalls(kmContent) : null;
+      if (kmToolCalls) {
+        res.json({ id, object: "chat.completion", created, model: _rawModel, service_tier: "default", system_fingerprint: "fp_kimi_gateway",
+          choices: [{ index: 0, message: { role: "assistant", refusal: null, content: null, tool_calls: kmToolCalls }, logprobs: null, finish_reason: "tool_calls" }],
+          usage: kmUsage });
+        return;
+      }
+      res.json({ id, object: "chat.completion", created, model: _rawModel, service_tier: "default", system_fingerprint: "fp_kimi_gateway",
+        choices: [{ index: 0, message: { role: "assistant", refusal: null, content: kmContent }, logprobs: null, finish_reason: kmFinish }],
+        usage: kmUsage });
       return;
     }
 

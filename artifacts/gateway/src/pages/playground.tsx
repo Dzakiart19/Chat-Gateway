@@ -38,6 +38,10 @@ const WORKING_MODELS = [
   { id: "chataibot-claude-sonnet", label: "chataibot-claude-sonnet (Claude Sonnet 4.5)", group: "ChatAIBot" },
   { id: "chataibot-deepseek-r1",   label: "chataibot-deepseek-r1 (DeepSeek R1)",         group: "ChatAIBot" },
   { id: "chataibot-gpt4-nano",     label: "chataibot-gpt4-nano (GPT-4.1 nano)",          group: "ChatAIBot" },
+  // ── Kimi (Moonshot AI Kimi-K2 via Connect RPC, requires KIMI_TOKEN) ──────
+  { id: "kimi-k2",       label: "kimi-k2 (Moonshot Kimi K2)",           group: "Kimi" },
+  { id: "kimi-search",   label: "kimi-search (Kimi + Web Search)",       group: "Kimi" },
+  { id: "kimi-research", label: "kimi-research (Kimi Deep Research)",    group: "Kimi" },
 ];
 
 const MODEL_GROUPS = [...new Set(WORKING_MODELS.map(m => m.group))];

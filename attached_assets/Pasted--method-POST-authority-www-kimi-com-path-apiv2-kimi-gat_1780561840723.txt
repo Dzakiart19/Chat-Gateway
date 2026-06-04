@@ -1,0 +1,38 @@
+:method: POST
+:authority: www.kimi.com
+:path: /apiv2/kimi.gateway.chat.v1.ChatService/Chat
+:scheme: https
+content-length: 339
+sec-ch-ua: "Chromium";v="137", "Not/A)Brand";v="24"
+x-language: en-US
+x-msh-device-id: 7607311620171227658
+x-traffic-id: d5b5fhf01qmag3281lu0
+sec-ch-ua-mobile: ?1
+authorization: Bearer eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJ1c2VyLWNlbnRlciIsImV4cCI6MTc4MzE1MzY2OSwiaWF0IjoxNzgwNTYxNjY5LCJqdGkiOiJkOGdqZTFjcWRxZW1vNWs5bjJ2ZyIsInR5cCI6ImFjY2VzcyIsImFwcF9pZCI6ImtpbWkiLCJzdWIiOiJkNWI1ZmhmMDFxbWFnMzI4MWx1MCIsInNwYWNlX2lkIjoiZDViNWZoNzAxcW1hZzMyODFqdGciLCJhYnN0cmFjdF91c2VyX2lkIjoiZDViNWZoNzAxcW1hZzMyODFqdDAiLCJzc2lkIjoiMTczMTQ3NzkyNjA5Njc0NjA0NSIsImRldmljZV9pZCI6Ijc2MDczMTE2MjAxNzEyMjc2NTgiLCJyZWdpb24iOiJvdmVyc2VhcyIsIm1lbWJlcnNoaXAiOnsibGV2ZWwiOjEwfX0.ExFQn-kVQy1VaimlBcsaod15OWmMK2JySuUbVpfBFD37_ckMx1alEAdFjBBo_XjjkD-crOlf1I4NE_v7CpbOKg
+user-agent: Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36
+content-type: application/connect+json
+x-msh-platform: web
+connect-protocol-version: 1
+x-msh-session-id: 1731477926096746045
+r-timezone: Asia/Jakarta
+x-msh-version: 1.0.0
+sec-ch-ua-platform: "Android"
+accept: */*
+origin: https://www.kimi.com
+sec-fetch-site: same-origin
+sec-fetch-mode: cors
+sec-fetch-dest: empty
+referer: https://www.kimi.com/chat/19e91bf4-40a2-8324-8000-096ecd348e18?chat_enter_method=home
+accept-encoding: gzip, deflate, br
+accept-language: id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7
+cookie: _ga=GA1.1.1132957031.1771215257
+cookie: theme=dark
+cookie: __snaker__id=bdPG7xLC1Q9exV5z
+cookie: Hm_lvt_358cae4815e85d48f7e8ab7f3680a74b=1780561614
+cookie: HMACCOUNT=FF0E26ABC444C98D
+cookie: _gcl_au=1.1.1467863813.1780561614
+cookie: g_state={"i_l":0,"i_ll":1780561617969,"i_b":"aSfi1CZNb5C+R+ZtcwIwNTL/6zKCuWmgAP0Uic1XO6A","i_e":{"enable_itp_optimization":0},"i_et":1780561617959}
+cookie: Hm_lpvt_358cae4815e85d48f7e8ab7f3680a74b=1780561669
+cookie: kimi-auth=eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJ1c2VyLWNlbnRlciIsImV4cCI6MTc4MzE1MzY2OSwiaWF0IjoxNzgwNTYxNjY5LCJqdGkiOiJkOGdqZTFjcWRxZW1vNWs5bjJ2ZyIsInR5cCI6ImFjY2VzcyIsImFwcF9pZCI6ImtpbWkiLCJzdWIiOiJkNWI1ZmhmMDFxbWFnMzI4MWx1MCIsInNwYWNlX2lkIjoiZDViNWZoNzAxcW1hZzMyODFqdGciLCJhYnN0cmFjdF91c2VyX2lkIjoiZDViNWZoNzAxcW1hZzMyODFqdDAiLCJzc2lkIjoiMTczMTQ3NzkyNjA5Njc0NjA0NSIsImRldmljZV9pZCI6Ijc2MDczMTE2MjAxNzEyMjc2NTgiLCJyZWdpb24iOiJvdmVyc2VhcyIsIm1lbWJlcnNoaXAiOnsibGV2ZWwiOjEwfX0.ExFQn-kVQy1VaimlBcsaod15OWmMK2JySuUbVpfBFD37_ckMx1alEAdFjBBo_XjjkD-crOlf1I4NE_v7CpbOKg
+cookie: _ga_YXD8W70SZP=GS2.1.s1780561613$o22$g1$t1780561692$j60$l0$h0
+cookie: __cf_bm=dv_g3w_Hi9wc3sMPdqrQvYKEtv_bUdyxEPSSY2rvNn0-1780561692.5415545-1.0.1.1-KOlx.9TQlInZTIq_KY2pJ4eZq.d23L4LS78Zy0CrNZc3Zt1KHuYYWG41NTq_K3faqFt6s9K8CzzXUgwX_QOcX4FXPP42rYr7SleSSbLQ08VOjalBPewomYHSUVjLUeRy

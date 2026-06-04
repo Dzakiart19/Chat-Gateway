@@ -4,3 +4,4 @@
 - [GPTFree provider](gptfree-provider.md) — Firebase anonymous auth (no account), endpoint: us-central1-gptfree-2.cloudfunctions.net/agent_stream, payload: {message, images:[], history:[{type,content}]}, SSE event:result.
 - [AlgoChat provider](algochat-provider.md) — Gemini 3 Flash via algochat.app guest session; messages MUST have `parts:[{type,text}]` field or server 500s; Vercel AI SDK Data Stream format response.
 - [ChatAIBot Provider](chataibot-provider.md) — chataibot.pro promo-chat endpoint, no auth, 5 req/IP limit, models: Claude Haiku/Sonnet, DeepSeek R1, GPT-4.1-nano
+- [Kimi provider](kimi-provider.md) — Connect RPC binary framing required on BOTH request and response; body = 5-byte envelope + JSON; scenario "SCENARIO_K2"; requires KIMI_TOKEN (JWT from kimi-auth cookie).
