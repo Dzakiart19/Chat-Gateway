@@ -45,9 +45,10 @@ const WORKING_MODELS = [
   { id: "kimi-k2",       label: "kimi-k2 (Moonshot Kimi K2)",           group: "Kimi" },
   { id: "kimi-search",   label: "kimi-search (Kimi + Web Search)",       group: "Kimi" },
   { id: "kimi-research", label: "kimi-research (Kimi Deep Research)",    group: "Kimi" },
-  // ── DeepSeek (official api.deepseek.com, requires DEEPSEEK_API_KEY) ──────
+  // ── DeepSeek (web scraping via chat.deepseek.com, requires DEEPSEEK_TOKEN) ─
   { id: "deepseek-chat",     label: "deepseek-chat (DeepSeek V3)",           group: "DeepSeek" },
   { id: "deepseek-reasoner", label: "deepseek-reasoner (DeepSeek R1)",       group: "DeepSeek" },
+  { id: "deepseek-search",   label: "deepseek-search (DeepSeek V3 + Search)",group: "DeepSeek" },
 ];
 
 const MODEL_GROUPS = [...new Set(WORKING_MODELS.map(m => m.group))];

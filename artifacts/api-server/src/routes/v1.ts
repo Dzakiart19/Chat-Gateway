@@ -608,9 +608,10 @@ const MODELS: ModelEntry[] = [
   ...KIMI_MODELS.map(m => ({ ...m, capabilities: { vision: false, tools: true, json_mode: false, streaming: true }, context_window: 131072 })),
   // MiniMax — MiniMax-M3/M2.7 via agent.minimax.io (requires MINIMAX_TOKEN + MINIMAX_SESSION_ID)
   ...Object.keys(MINIMAX_MODELS).map(id => ({ id, object: "model", created: 1748736000, owned_by: "minimax", capabilities: { vision: false, tools: true, json_mode: false, streaming: true }, context_window: id.startsWith("minimax-m3") ? 450000 : 200000 })),
-  // DeepSeek — official api.deepseek.com (requires DEEPSEEK_API_KEY), OpenAI-compatible
-  { id: "deepseek-chat",     object: "model", created: 1748736000, owned_by: "deepseek", context_window: 65536, capabilities: { vision: false, tools: true, json_mode: true,  streaming: true } },
-  { id: "deepseek-reasoner", object: "model", created: 1748736000, owned_by: "deepseek", context_window: 65536, capabilities: { vision: false, tools: true, json_mode: false, streaming: true } },
+  // DeepSeek — web scraping via chat.deepseek.com (requires DEEPSEEK_TOKEN)
+  { id: "deepseek-chat",     object: "model", created: 1748736000, owned_by: "deepseek", context_window: 65536, capabilities: { vision: false, tools: true, json_mode: false, streaming: true } },
+  { id: "deepseek-reasoner", object: "model", created: 1748736000, owned_by: "deepseek", context_window: 65536, capabilities: { vision: false, tools: false, json_mode: false, streaming: true } },
+  { id: "deepseek-search",   object: "model", created: 1748736000, owned_by: "deepseek", context_window: 65536, capabilities: { vision: false, tools: false, json_mode: false, streaming: true } },
   // Qwen text + vision models — all support vision via OSS image upload
   { id: "qwen3.7-max",                 object: "model", created: 1748736000, owned_by: "qwen", context_window: 131072,
     capabilities: { vision: true, tools: true, json_mode: true, streaming: true } },
