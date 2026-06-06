@@ -36,7 +36,6 @@ jobs:
           command: ${{ github.event.inputs.action || 'up' }}
           project: Chat-Gateway
           stack: ${{ github.event.inputs.stack || 'production' }}
-          compose-file: docker-compose.yaml
           config-env-vars: |-
             JWT_SECRET
             MONGODB_DATABASE
@@ -51,5 +50,4 @@ jobs:
           command: services
           project: Chat-Gateway
           stack: ${{ github.event.inputs.stack || 'production' }}
-          compose-file: docker-compose.yaml
     environment: defang-production
