@@ -1,3 +1,4 @@
+name: chat-gateway
 services:
   app:
     build:
