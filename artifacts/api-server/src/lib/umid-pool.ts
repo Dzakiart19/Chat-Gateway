@@ -2124,6 +2124,11 @@ let _rrIndex = 0;
 let _initializing = false;
 let _initPromise: Promise<void> | null = null;
 
+// Resolves as soon as the first batch of tokens is ready — callers don't need to
+// wait for all 2000 tokens, just enough to start serving requests.
+let _firstBatchResolve: (() => void) | null = null;
+const _firstBatchReady = new Promise<void>((resolve) => { _firstBatchResolve = resolve; });
+
 async function fetchToken(userAgent: string): Promise<string> {
   try {
     const res = await fetch(UMID_URL, {
@@ -2138,12 +2143,17 @@ async function fetchToken(userAgent: string): Promise<string> {
 }
 
 // Fetch tokens in batches to avoid hammering the UMID endpoint with 100 concurrent requests
-async function fetchBatch(agents: string[]): Promise<void> {
+async function fetchBatch(agents: string[], isFirst = false): Promise<void> {
   const results = await Promise.allSettled(agents.map((ua) => fetchToken(ua)));
   for (let i = 0; i < results.length; i++) {
     const r = results[i];
     const token = r.status === "fulfilled" ? r.value : "";
     if (token) _pool.push({ token, ts: Date.now(), ua: agents[i] });
+  }
+  // Signal that at least one batch is done so waiting requests can proceed
+  if (isFirst && _firstBatchResolve) {
+    _firstBatchResolve();
+    _firstBatchResolve = null;
   }
 }
 
@@ -2155,8 +2165,10 @@ async function initPool(): Promise<void> {
     logger.info({ size: poolSize }, "Initializing bx-umidtoken pool (batched)");
     const BATCH = 10;
     for (let i = 0; i < USER_AGENTS.length; i += BATCH) {
-      await fetchBatch(USER_AGENTS.slice(i, i + BATCH));
+      await fetchBatch(USER_AGENTS.slice(i, i + BATCH), i === 0);
     }
+    // Ensure _firstBatchReady is resolved even if all batches fetched 0 tokens
+    if (_firstBatchResolve) { _firstBatchResolve(); _firstBatchResolve = null; }
     logger.info({ fetched: _pool.length, target: poolSize }, "bx-umidtoken pool ready");
   })();
   return _initPromise;
@@ -2180,11 +2192,23 @@ async function refreshExpired(): Promise<void> {
 }
 
 /**
+ * Start warming the pool in the background without blocking.
+ * Call this at server startup so the pool is ready before the first request arrives.
+ */
+export function warmPool(): void {
+  if (!_initializing) void initPool();
+}
+
+/**
  * Get the next available bx-umidtoken from the pool (round-robin).
- * Automatically initializes the pool on first call and refreshes expired tokens.
+ * Waits only for the first batch (~10 tokens) — not the full 2000 — before serving.
  */
 export async function getPooledMidtoken(): Promise<string> {
-  if (_pool.length === 0) await initPool();
+  // Start init if it hasn't been triggered yet (lazy fallback)
+  if (!_initializing) void initPool();
+
+  // Wait only until first batch is ready, not the full pool
+  if (_pool.length === 0) await _firstBatchReady;
 
   // Refresh stale tokens in background — don't block current request
   void refreshExpired();
