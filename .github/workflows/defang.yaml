@@ -27,7 +27,7 @@ jobs:
     concurrency:
       cancel-in-progress: false
       group: deploy-Chat-Gateway-${{ github.event.inputs.stack || 'production' }}
-    environment: defang-production
+    environment: production-divine-vittoria/chat-gateway
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v4
