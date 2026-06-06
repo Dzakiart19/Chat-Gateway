@@ -1,4 +1,4 @@
-FROM node:22-alpine AS base
+FROM node:22-slim AS base
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
 RUN corepack enable && corepack prepare pnpm@10.26.1 --activate
@@ -24,6 +24,7 @@ FROM deps AS builder
 WORKDIR /app
 
 COPY lib/db/              ./lib/db/
+COPY lib/api-spec/        ./lib/api-spec/
 COPY lib/api-zod/         ./lib/api-zod/
 COPY lib/api-client-react/ ./lib/api-client-react/
 COPY artifacts/api-server/ ./artifacts/api-server/
@@ -39,11 +40,11 @@ RUN pnpm --filter @workspace/api-server run build
 RUN cp -r ./artifacts/gateway/dist/public ./artifacts/api-server/dist/public
 
 # ── Production image ─────────────────────────────────────────────────────────
-FROM node:22-alpine AS runner
+FROM node:22-slim AS runner
 WORKDIR /app
 
 # curl is required by AI provider helpers (execSync curl)
-RUN apk add --no-cache curl
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
 
 ENV NODE_ENV=production
 ENV PORT=8000
