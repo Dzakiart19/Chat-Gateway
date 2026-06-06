@@ -2,9 +2,8 @@ import { logger } from "./logger";
 
 const UMID_URL = "https://sg-wum.alibaba.com/w/wu.json";
 const TOKEN_TTL = 3600_000; // 1 hour
-const POOL_SIZE = 2000;
 
-// 200 distinct User-Agent strings across Chrome/Firefox/Safari/Edge/Opera/Brave versions and OS combos
+// ~2000 distinct User-Agent strings across Chrome/Firefox/Safari/Edge/Opera/Brave versions and OS combos
 // to maximise token variety and distribute rate-limit pressure across identities.
 const USER_AGENTS: string[] = [
   // Chrome on Windows (various versions)
@@ -2152,13 +2151,13 @@ async function initPool(): Promise<void> {
   if (_initializing) return _initPromise!;
   _initializing = true;
   _initPromise = (async () => {
-    logger.info({ size: POOL_SIZE }, "Initializing bx-umidtoken pool (batched)");
-    const agents = USER_AGENTS.slice(0, POOL_SIZE);
+    const poolSize = USER_AGENTS.length;
+    logger.info({ size: poolSize }, "Initializing bx-umidtoken pool (batched)");
     const BATCH = 10;
-    for (let i = 0; i < agents.length; i += BATCH) {
-      await fetchBatch(agents.slice(i, i + BATCH));
+    for (let i = 0; i < USER_AGENTS.length; i += BATCH) {
+      await fetchBatch(USER_AGENTS.slice(i, i + BATCH));
     }
-    logger.info({ fetched: _pool.length, target: POOL_SIZE }, "bx-umidtoken pool ready");
+    logger.info({ fetched: _pool.length, target: poolSize }, "bx-umidtoken pool ready");
   })();
   return _initPromise;
 }
