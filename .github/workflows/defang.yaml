@@ -38,7 +38,7 @@ jobs:
         continue-on-error: true
         with:
           command: config set -e JWT_SECRET MONGODB_DATABASE MONGODB_URI
-          project: chat-gateway
+          project: Chat-Gateway
           stack: ${{ github.event.inputs.stack || 'production' }}
         env:
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
@@ -50,7 +50,7 @@ jobs:
         uses: DefangLabs/defang-github-action@v2
         with:
           command: ${{ github.event.inputs.action || 'up' }}
-          project: chat-gateway
+          project: Chat-Gateway
           stack: ${{ github.event.inputs.stack || 'production' }}
 
       # Post-set configs — ensures secrets are always up-to-date after the stack exists
@@ -59,7 +59,7 @@ jobs:
         uses: DefangLabs/defang-github-action@v2
         with:
           command: config set -e JWT_SECRET MONGODB_DATABASE MONGODB_URI
-          project: chat-gateway
+          project: Chat-Gateway
           stack: ${{ github.event.inputs.stack || 'production' }}
         env:
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
@@ -71,5 +71,5 @@ jobs:
         uses: DefangLabs/defang-github-action@v2
         with:
           command: services
-          project: chat-gateway
+          project: Chat-Gateway
           stack: ${{ github.event.inputs.stack || 'production' }}
