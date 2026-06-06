@@ -1,6 +1,7 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 import { warmPool } from "./lib/umid-pool";
+import { registerWebhookOnStartup } from "./routes/telegram";
 
 const rawPort = process.env["PORT"];
 
@@ -26,8 +27,11 @@ process.on("unhandledRejection", (reason) => {
 
 const server = app.listen(port, "0.0.0.0", () => {
   logger.info({ port }, "Server listening on 0.0.0.0");
-  // Warm the token pool immediately at startup — don't wait for first request
   warmPool();
+  // Register Telegram webhook in background — non-blocking
+  registerWebhookOnStartup().catch((err) => {
+    logger.warn({ err }, "Telegram webhook registration failed at startup");
+  });
 });
 
 server.keepAliveTimeout = 65_000;

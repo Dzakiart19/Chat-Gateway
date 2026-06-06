@@ -27,5 +27,6 @@ export async function getDb(): Promise<Db> {
   await dbInstance.collection("users").createIndex({ email: 1 }, { unique: true });
   await dbInstance.collection("api_keys").createIndex({ key_hash: 1 });
   await dbInstance.collection("api_keys").createIndex({ user_id: 1 });
+  await dbInstance.collection("telegram_users").createIndex({ telegram_id: 1 }, { unique: true });
   return dbInstance;
 }

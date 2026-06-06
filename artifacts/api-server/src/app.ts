@@ -5,6 +5,7 @@ import path from "node:path";
 import { existsSync } from "node:fs";
 import router from "./routes";
 import v1Router from "./routes/v1";
+import telegramRouter from "./routes/telegram";
 import { logger } from "./lib/logger";
 
 const app: Express = express();
@@ -34,6 +35,7 @@ app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
 app.use("/api", router);
 app.use("/v1", v1Router);
+app.use("/", telegramRouter);
 
 // Serve React frontend (built by Vite into dist/public)
 const staticDir = path.join(__dirname, "public");
