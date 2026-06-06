@@ -116,10 +116,14 @@ function injectToolPrompt(
 AVAILABLE TOOLS:
 ${defs}
 
-RESPONSE FORMAT — when calling a tool, output ONLY this raw JSON (no markdown, no explanation):
-{"tool_calls":[{"name":"FUNCTION_NAME","arguments":{...}}]}
-
-When NOT calling a tool, respond normally in plain text.`;
+STRICT RESPONSE RULES:
+1. When calling tools: output ONLY a single raw JSON object — no markdown, no explanation, no surrounding text:
+   {"tool_calls":[{"name":"TOOL_NAME","arguments":{...}}]}
+2. To call MULTIPLE tools at once, put ALL of them in the SAME array in ONE single JSON object:
+   {"tool_calls":[{"name":"TOOL_A","arguments":{...}},{"name":"TOOL_B","arguments":{...}}]}
+3. NEVER output multiple separate JSON blocks. ONE response = ONE JSON object with all tool calls.
+4. When NOT calling a tool, respond normally in plain text with NO JSON.
+5. Your entire response must be EITHER the JSON object OR plain text — never both.`;
 
   let result: Array<{ role: string; content?: string | ContentPart[] | null }>;
   const first = messages[0];
@@ -169,26 +173,60 @@ function injectJsonMode(messages: Message[]): Message[] {
 }
 
 function detectToolCalls(raw: string): DetectedToolCall[] | null {
-  const cleaned = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
-  const start = cleaned.indexOf("{");
-  const end = cleaned.lastIndexOf("}");
-  if (start === -1 || end === -1) return null;
-  try {
-    const parsed = JSON.parse(cleaned.slice(start, end + 1)) as {
-      tool_calls?: Array<{ name: string; arguments: unknown }>;
-    };
-    if (!Array.isArray(parsed.tool_calls) || parsed.tool_calls.length === 0) return null;
-    return parsed.tool_calls.map((tc, i) => ({
-      id: `call_${randomUUID().replace(/-/g, "").slice(0, 20)}_${i}`,
-      type: "function" as const,
-      function: {
-        name: tc.name,
-        arguments: typeof tc.arguments === "string" ? tc.arguments : JSON.stringify(tc.arguments),
-      },
-    }));
-  } catch {
-    return null;
+  // Strip markdown fences anywhere in the text
+  const cleaned = raw.trim().replace(/```(?:json)?/gi, "").trim();
+
+  const allCalls: DetectedToolCall[] = [];
+  let callIndex = 0;
+
+  // Walk the string finding every top-level JSON object that contains "tool_calls"
+  let searchFrom = 0;
+  while (searchFrom < cleaned.length) {
+    const blockStart = cleaned.indexOf("{", searchFrom);
+    if (blockStart === -1) break;
+
+    // Match balanced braces to find the end of this JSON object
+    let depth = 0;
+    let blockEnd = -1;
+    for (let i = blockStart; i < cleaned.length; i++) {
+      if (cleaned[i] === "{") depth++;
+      else if (cleaned[i] === "}") {
+        depth--;
+        if (depth === 0) { blockEnd = i; break; }
+      }
+    }
+
+    if (blockEnd === -1) break;
+
+    const candidate = cleaned.slice(blockStart, blockEnd + 1);
+    if (candidate.includes('"tool_calls"')) {
+      try {
+        const parsed = JSON.parse(candidate) as { tool_calls?: Array<{ name: string; arguments: unknown }> };
+        if (Array.isArray(parsed.tool_calls) && parsed.tool_calls.length > 0) {
+          for (const tc of parsed.tool_calls) {
+            if (!tc.name) continue;
+            allCalls.push({
+              id: `call_${randomUUID().replace(/-/g, "").slice(0, 20)}_${callIndex++}`,
+              type: "function" as const,
+              function: {
+                name: tc.name,
+                arguments: typeof tc.arguments === "string" ? tc.arguments : JSON.stringify(tc.arguments ?? {}),
+              },
+            });
+          }
+        }
+      } catch { /* skip malformed block, continue searching */ }
+    }
+
+    searchFrom = blockEnd + 1;
   }
+
+  return allCalls.length > 0 ? allCalls : null;
+}
+
+/** Returns true if the string looks like a raw tool-call JSON that failed to parse. */
+function looksLikeToolCallJson(text: string): boolean {
+  return text.includes('"tool_calls"') && text.includes('"name"') && text.includes('"arguments"');
 }
 
 // ── Vision / multipart content types ─────────────────────────────────────────
@@ -1791,12 +1829,19 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
           }
           res.write(sseChunk({}, "tool_calls"));
         } else {
-          res.write(sseChunk({ role: "assistant", content: "" }));
-          const words = content.split(/(\s+)/);
-          for (const word of words) {
-            if (word) res.write(sseChunk({ content: word }));
+          // Safety: if the content looks like a tool-call JSON that we failed to parse,
+          // don't leak raw JSON to the client — emit an empty stop instead.
+          if (looksLikeToolCallJson(content)) {
+            res.write(sseChunk({ role: "assistant", content: null }));
+            res.write(sseChunk({}, "stop"));
+          } else {
+            res.write(sseChunk({ role: "assistant", content: "" }));
+            const words = content.split(/(\s+)/);
+            for (const word of words) {
+              if (word) res.write(sseChunk({ content: word }));
+            }
+            res.write(sseChunk({}, "stop"));
           }
-          res.write(sseChunk({}, "stop"));
         }
 
         if (includeUsage) res.write(sseUsageChunk(inputTokens, outputTokens));
@@ -1901,6 +1946,10 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
       return;
     }
 
+    // Safety: if the model leaked a raw tool-call JSON but detection failed,
+    // return null content instead of exposing raw JSON to the client.
+    const safeContent = (hasTools && looksLikeToolCallJson(content)) ? null : content;
+
     res.json({
       id,
       object: "chat.completion",
@@ -1910,9 +1959,9 @@ router.post("/chat/completions", requireApiKey, async (req, res) => {
       system_fingerprint: "fp_qwen_gateway",
       choices: [{
         index: 0,
-        message: { role: "assistant", refusal: null, content },
+        message: { role: "assistant", refusal: null, content: safeContent },
         logprobs: null,
-        finish_reason: qwenFinish,
+        finish_reason: safeContent === null ? "stop" : qwenFinish,
       }],
       usage: usageBlock,
     });
