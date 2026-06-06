@@ -2158,4 +2158,115 @@ router.post("/embeddings", requireApiKey, (_req, res) => {
   });
 });
 
+// ── POST /v1/images/generations ──────────────────────────────────────────────
+// OpenAI-compatible image generation via Qwen t2i (Wan model internally).
+// Request:  { prompt, model?, n?, size?, quality? }
+// Response: { created, data: [{ url, revised_prompt? }] }
+
+router.post("/images/generations", requireApiKey, async (req, res) => {
+  try {
+    const body = req.body as {
+      prompt?: string;
+      model?: string;
+      n?: number;
+      size?: string;
+      quality?: string;
+      response_format?: string;
+    };
+
+    const prompt = body.prompt?.trim();
+    if (!prompt) {
+      res.status(400).json({
+        error: { message: "prompt is required", type: "invalid_request_error", param: "prompt", code: "missing_param" },
+      });
+      return;
+    }
+
+    const n = Math.min(Math.max(body.n ?? 1, 1), 4);
+
+    // Use qwen3.7-plus — supports image-generation MCP internally via t2i chat type
+    const imageModel = "qwen3.7-plus";
+
+    const midtoken = await getMidtoken();
+    const headers = qwenHeaders(midtoken);
+
+    // Generate n images — fire all in parallel
+    const tasks = Array.from({ length: n }, async (): Promise<{ url: string } | null> => {
+      try {
+        const chatId = await createQwenChat(headers, imageModel);
+
+        const r = await fetch(`${QWEN_BASE}/chat/completions?chat_id=${chatId}`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            stream: true,
+            incremental_output: true,
+            chat_id: chatId,
+            chat_mode: "normal",
+            model: imageModel,
+            parent_id: null,
+            messages: [{
+              fid: randomUUID(),
+              parentId: null,
+              childrenIds: [],
+              role: "user",
+              content: prompt,
+              user_action: "chat",
+              files: [],
+              models: [imageModel],
+              chat_type: "t2i",
+              feature_config: { thinking_enabled: false },
+              sub_chat_type: "t2i",
+            }],
+          }),
+        });
+
+        if (!r.ok) return null;
+
+        const rawBody = await r.text();
+        // The content is the signed CDN URL for the image
+        let imageUrl = "";
+        for (const line of rawBody.split("\n")) {
+          if (!line.startsWith("data:")) continue;
+          try {
+            const chunk = JSON.parse(line.slice(5).trim()) as {
+              choices?: Array<{ delta?: { content?: string } }>;
+            };
+            const content = chunk.choices?.[0]?.delta?.content ?? "";
+            if (content) imageUrl += content;
+          } catch { /* skip */ }
+        }
+
+        imageUrl = imageUrl.trim();
+        if (!imageUrl.startsWith("http")) return null;
+        return { url: imageUrl };
+      } catch {
+        return null;
+      }
+    });
+
+    const results = await Promise.all(tasks);
+    const images = results.filter((r): r is { url: string } => r !== null);
+
+    if (images.length === 0) {
+      res.status(502).json({
+        error: { message: "Image generation failed — no image returned from upstream", type: "upstream_error", param: null, code: "empty_response" },
+      });
+      return;
+    }
+
+    res.json({
+      created: Math.floor(Date.now() / 1000),
+      data: images,
+    });
+  } catch (err) {
+    logger.error({ err }, "v1/images/generations error");
+    if (!res.headersSent) {
+      res.status(500).json({
+        error: { message: "Internal server error", type: "api_error", param: null, code: "internal_error" },
+      });
+    }
+  }
+});
+
 export default router;
