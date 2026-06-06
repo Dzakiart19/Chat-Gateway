@@ -53,6 +53,7 @@ if (existsSync(staticDir)) {
       docs: "https://platform.openai.com/docs/api-reference",
       endpoints: {
         chat: "POST /v1/chat/completions",
+        images: "POST /v1/images/generations",
         models: "GET /v1/models",
         health: "GET /api/healthz",
         register: "POST /api/auth/register",
