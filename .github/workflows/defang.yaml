@@ -13,12 +13,9 @@ on:
         options:
           - up
           - down
-      stack:
-        description: The stack to deploy up or down. (Leave blank for default)
-        default: production
 jobs:
   defang:
-    name: Defang ${{ github.event.inputs.action || 'up' }} ${{ github.event.inputs.stack || 'production' }}
+    name: Defang ${{ github.event.inputs.action || 'up' }}
     runs-on: ubuntu-latest
     timeout-minutes: 70
     permissions:
@@ -26,50 +23,23 @@ jobs:
       id-token: write
     concurrency:
       cancel-in-progress: false
-      group: deploy-Chat-Gateway-${{ github.event.inputs.stack || 'production' }}
-    environment: production-divine-vittoria/chat-gateway
+      group: deploy-chat-gateway
+    environment: defang-production
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v4
 
-      # Pre-set configs (may fail on very first run when stack doesn't exist yet — that's OK)
-      - name: Set Defang Configs (pre-deploy)
-        uses: DefangLabs/defang-github-action@v2
-        continue-on-error: true
-        with:
-          command: config set -e JWT_SECRET MONGODB_DATABASE MONGODB_URI
-          project: chat-gateway
-          stack: ${{ github.event.inputs.stack || 'production' }}
-        env:
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
-          MONGODB_DATABASE: ${{ secrets.MONGODB_DATABASE }}
-          MONGODB_URI: ${{ secrets.MONGODB_URI }}
-
-      # Deploy — this also creates the stack on the very first run
-      - name: Defang ${{ github.event.inputs.action || 'up' }} ${{ github.event.inputs.stack || 'production' }}
+      - name: Defang ${{ github.event.inputs.action || 'up' }}
         uses: DefangLabs/defang-github-action@v2
         with:
           command: ${{ github.event.inputs.action || 'up' }}
-          project: chat-gateway
-          stack: ${{ github.event.inputs.stack || 'production' }}
-
-      # Post-set configs — ensures secrets are always up-to-date after the stack exists
-      - name: Set Defang Configs (post-deploy)
-        if: ${{ github.event.inputs.action != 'down' }}
-        uses: DefangLabs/defang-github-action@v2
-        with:
-          command: config set -e JWT_SECRET MONGODB_DATABASE MONGODB_URI
-          project: chat-gateway
-          stack: ${{ github.event.inputs.stack || 'production' }}
         env:
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
-          MONGODB_DATABASE: ${{ secrets.MONGODB_DATABASE }}
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          MONGODB_DATABASE: ${{ secrets.MONGODB_DATABASE }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
 
       - name: Deployment Summary
         if: ${{ github.event.inputs.action != 'down' }}
         uses: DefangLabs/defang-github-action@v2
         with:
           command: services
-          project: chat-gateway
-          stack: ${{ github.event.inputs.stack || 'production' }}
