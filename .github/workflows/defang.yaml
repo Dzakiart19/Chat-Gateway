@@ -29,6 +29,15 @@ jobs:
       - name: Checkout Repo
         uses: actions/checkout@v4
 
+      - name: Set Defang Configs
+        uses: DefangLabs/defang-github-action@v2
+        with:
+          command: config set -e JWT_SECRET MONGODB_DATABASE MONGODB_URI
+        env:
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          MONGODB_DATABASE: ${{ secrets.MONGODB_DATABASE }}
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+
       - name: Defang ${{ github.event.inputs.action || 'up' }}
         uses: DefangLabs/defang-github-action@v2
         with:
