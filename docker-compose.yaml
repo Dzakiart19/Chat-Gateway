@@ -1,0 +1,18 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - mode: ingress
+        target: 8000
+    environment:
+      - MONGODB_URI
+      - MONGODB_DATABASE
+      - JWT_SECRET
+      - NODE_ENV=production
+      - PORT=8000
+    deploy:
+      resources:
+        reservations:
+          memory: 512M
