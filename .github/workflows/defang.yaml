@@ -34,7 +34,7 @@ jobs:
         uses: DefangLabs/defang-github-action@v2
         with:
           command: ${{ github.event.inputs.action || 'up' }}
-          project: Chat-Gateway
+          project: chat-gateway
           stack: ${{ github.event.inputs.stack || 'production' }}
           config-env-vars: |-
             JWT_SECRET
@@ -48,6 +48,7 @@ jobs:
         uses: DefangLabs/defang-github-action@v2
         with:
           command: services
-          project: Chat-Gateway
+          project: chat-gateway
           stack: ${{ github.event.inputs.stack || 'production' }}
     environment: defang-production
+    
