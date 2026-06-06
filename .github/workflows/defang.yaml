@@ -1,0 +1,55 @@
+name: Defang
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Whether to deploy up or down
+        required: true
+        default: up
+        type: choice
+        options:
+          - up
+          - down
+      stack:
+        description: The stack to deploy up or down. (Leave blank for default)
+        default: production
+jobs:
+  defang:
+    name: Defang ${{ github.event.inputs.action || 'up' }} ${{ github.event.inputs.stack || 'production' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      cancel-in-progress: false
+      group: deploy-Chat-Gateway-${{ github.event.inputs.stack || 'production' }}
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+      - name: Defang ${{ github.event.inputs.action || 'up' }} ${{ github.event.inputs.stack || 'production' }}
+        uses: DefangLabs/defang-github-action@v2
+        with:
+          command: ${{ github.event.inputs.action || 'up' }}
+          project: Chat-Gateway
+          stack: ${{ github.event.inputs.stack || 'production' }}
+          compose-file: docker-compose.yaml
+          config-env-vars: |-
+            JWT_SECRET
+            MONGODB_DATABASE
+            MONGODB_URI
+        env:
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          MONGODB_DATABASE: ${{ secrets.MONGODB_DATABASE }}
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+      - name: Deployment Summary
+        uses: DefangLabs/defang-github-action@v2
+        with:
+          command: services
+          project: Chat-Gateway
+          stack: ${{ github.event.inputs.stack || 'production' }}
+          compose-file: docker-compose.yaml
+    environment: defang-production
