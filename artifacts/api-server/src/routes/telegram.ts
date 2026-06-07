@@ -57,13 +57,13 @@ export function buildWebhookUrl(): string | null {
   // BASE_URL always wins (manually set, e.g. production domain)
   if (process.env["BASE_URL"]) {
     const base = process.env["BASE_URL"].replace(/\/$/, "");
-    return `${base}/telegram/webhook`;
+    return `${base}/api/telegram/webhook`;
   }
 
   // In Replit Autoscale/deployment, REPLIT_DEPLOYMENT=1 and REPLIT_DOMAINS has the prod domain
   if (process.env["REPLIT_DEPLOYMENT"] === "1" && process.env["REPLIT_DOMAINS"]) {
     const domain = process.env["REPLIT_DOMAINS"].split(",")[0]!.trim();
-    return `https://${domain}/telegram/webhook`;
+    return `https://${domain}/api/telegram/webhook`;
   }
 
   // Dev environment — skip auto-registration, webhook managed manually

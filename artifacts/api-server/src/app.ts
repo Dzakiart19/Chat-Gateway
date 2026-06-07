@@ -34,8 +34,8 @@ app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
 app.use("/api", router);
+app.use("/api", telegramRouter);
 app.use("/v1", v1Router);
-app.use("/", telegramRouter);
 
 // Serve React frontend (built by Vite into dist/public)
 const staticDir = path.join(__dirname, "public");
