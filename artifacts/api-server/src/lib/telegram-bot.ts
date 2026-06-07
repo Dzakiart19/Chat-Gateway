@@ -91,12 +91,22 @@ async function revokeAllKeysForUser(userId: string) {
   );
 }
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function getApiBaseUrl(): string {
+  if (process.env["BASE_URL"]) return process.env["BASE_URL"].replace(/\/$/, "");
+  if (process.env["REPLIT_DOMAINS"]) return `https://${process.env["REPLIT_DOMAINS"].split(",")[0]!.trim()}`;
+  return "https://chat-gateway--tmi84kzh.replit.app";
+}
+
 // ── Message templates ────────────────────────────────────────────────────────
 
 function welcomeText(firstName: string): string {
+  const base = getApiBaseUrl();
   return (
     `👋 <b>Selamat datang, ${escHtml(firstName)}!</b>\n\n` +
     `Saya <b>Dzeck Gateway Bot</b> — asisten untuk mengelola akses ke <b>Qwen AI Gateway</b>.\n\n` +
+    `<b>🌐 Base URL API:</b>\n<code>${base}</code>\n\n` +
     `<b>Yang bisa saya lakukan:</b>\n` +
     `• 🔑 Generate &amp; kelola API key Anda\n` +
     `• 📊 Cek status penggunaan\n` +
@@ -106,6 +116,7 @@ function welcomeText(firstName: string): string {
 }
 
 function helpText(): string {
+  const base = getApiBaseUrl();
   return (
     `<b>📋 Daftar Perintah</b>\n\n` +
     `<b>API Key</b>\n` +
@@ -116,8 +127,10 @@ function helpText(): string {
     `• /status — Status server &amp; pool token\n` +
     `• /start — Menu utama\n` +
     `• /help — Tampilkan pesan ini\n\n` +
-    `<b>💡 Tips:</b> API key yang dihasilkan bisa langsung digunakan di:\n` +
-    `<code>Authorization: Bearer sk-dzcx...</code>`
+    `<b>🌐 Base URL API:</b>\n<code>${base}</code>\n\n` +
+    `<b>💡 Cara pakai:</b>\n` +
+    `<code>Authorization: Bearer sk-dzcx...</code>\n` +
+    `<code>POST ${base}/v1/chat/completions</code>`
   );
 }
 
@@ -153,14 +166,16 @@ async function handleApiKey(chatId: number, from: TgUser): Promise<void> {
     if (keys.length === 0) {
       // Auto-generate first key
       const { key } = await createApiKeyForUser(userId, "Telegram Key");
+      const base = getApiBaseUrl();
       await sendMessage(
         chatId,
         `🎉 <b>API key berhasil dibuat!</b>\n\n` +
           `<b>Key Anda:</b>\n<code>${key}</code>\n\n` +
           `⚠️ <b>Simpan key ini sekarang</b> — tidak akan ditampilkan lagi.\n\n` +
+          `<b>🌐 Base URL:</b>\n<code>${base}</code>\n\n` +
           `<b>Cara pakai:</b>\n` +
-          `<code>Authorization: Bearer ${key}</code>\n\n` +
-          `Endpoint: <code>POST /v1/chat/completions</code>`,
+          `<code>Authorization: Bearer ${key}</code>\n` +
+          `<code>POST ${base}/v1/chat/completions</code>`,
         {
           parse_mode: "HTML",
           disable_web_page_preview: true,
@@ -215,6 +230,7 @@ async function handleNewKey(chatId: number, from: TgUser): Promise<void> {
 
     // Generate new key
     const { key } = await createApiKeyForUser(userId, "Telegram Key");
+    const base = getApiBaseUrl();
 
     await sendMessage(
       chatId,
@@ -222,8 +238,10 @@ async function handleNewKey(chatId: number, from: TgUser): Promise<void> {
         `<b>Key lama:</b> dinonaktifkan\n\n` +
         `<b>Key baru Anda:</b>\n<code>${key}</code>\n\n` +
         `⚠️ <b>Simpan key ini sekarang</b> — tidak akan ditampilkan lagi.\n\n` +
+        `<b>🌐 Base URL:</b>\n<code>${base}</code>\n\n` +
         `<b>Cara pakai:</b>\n` +
-        `<code>Authorization: Bearer ${key}</code>`,
+        `<code>Authorization: Bearer ${key}</code>\n` +
+        `<code>POST ${base}/v1/chat/completions</code>`,
       {
         parse_mode: "HTML",
         disable_web_page_preview: true,
@@ -308,12 +326,14 @@ async function handleStatus(chatId: number): Promise<void> {
           ? `${Math.floor(uptime / 60)}m`
           : `${Math.floor(uptime / 3600)}j ${Math.floor((uptime % 3600) / 60)}m`;
 
+    const base = getApiBaseUrl();
     await sendMessage(
       chatId,
       `🟢 <b>Status Server</b>\n\n` +
         `<b>Server:</b> Online ✅\n` +
         `<b>Uptime:</b> ${uptimeStr}\n` +
         `<b>Environment:</b> ${process.env["NODE_ENV"] ?? "production"}\n\n` +
+        `<b>🌐 Base URL API:</b>\n<code>${base}</code>\n\n` +
         `<b>📊 Statistik Database</b>\n` +
         `• Total pengguna: <b>${totalUsers}</b>\n` +
         `• Pengguna Telegram: <b>${tgUsers}</b>\n` +
