@@ -1,3 +1,6 @@
+import { getDb } from "./mongo";
+import { logger } from "./logger";
+
 export interface HistoryEntry {
   id: string;
   success: boolean;
@@ -13,32 +16,84 @@ export interface HistoryEntry {
   error: string | null;
 }
 
-const history: HistoryEntry[] = [];
+const COLLECTION = "request_history";
 
-export function recordRequest(entry: HistoryEntry): void {
-  history.unshift(entry);
+export async function recordRequest(entry: HistoryEntry): Promise<void> {
+  try {
+    const db = await getDb();
+    await db.collection(COLLECTION).insertOne({ ...entry, _insertedAt: new Date() });
+  } catch (err) {
+    logger.warn({ err }, "stats: failed to persist request to MongoDB");
+  }
 }
 
-export function getHistory(limit?: number): HistoryEntry[] {
-  return limit ? history.slice(0, limit) : history;
+export async function getHistory(limit?: number): Promise<HistoryEntry[]> {
+  try {
+    const db = await getDb();
+    const cursor = db
+      .collection<HistoryEntry>(COLLECTION)
+      .find({}, { projection: { _id: 0, _insertedAt: 0 } })
+      .sort({ requestedAt: -1 });
+    if (limit) cursor.limit(limit);
+    return await cursor.toArray();
+  } catch (err) {
+    logger.warn({ err }, "stats: failed to read history from MongoDB");
+    return [];
+  }
 }
 
-export function clearHistory(): number {
-  const count = history.length;
-  history.splice(0, history.length);
-  return count;
+export async function clearHistory(): Promise<number> {
+  try {
+    const db = await getDb();
+    const result = await db.collection(COLLECTION).deleteMany({});
+    return result.deletedCount;
+  } catch (err) {
+    logger.warn({ err }, "stats: failed to clear history from MongoDB");
+    return 0;
+  }
 }
 
-export function getStats() {
-  const total = history.length;
-  const successCount = history.filter((h) => h.success).length;
-  return {
-    totalRequests: total,
-    successCount,
-    failureCount: total - successCount,
-    avgResponseTime: total > 0
-      ? Math.round(history.reduce((s, h) => s + h.responseTime, 0) / total)
-      : 0,
-    lastRequestAt: history[0]?.requestedAt ?? null,
-  };
+export async function getStats(): Promise<{
+  totalRequests: number;
+  successCount: number;
+  failureCount: number;
+  avgResponseTime: number;
+  lastRequestAt: string | null;
+}> {
+  try {
+    const db = await getDb();
+    const col = db.collection<HistoryEntry>(COLLECTION);
+
+    const [agg, last] = await Promise.all([
+      col
+        .aggregate([
+          {
+            $group: {
+              _id: null,
+              total: { $sum: 1 },
+              successCount: { $sum: { $cond: ["$success", 1, 0] } },
+              avgResponseTime: { $avg: "$responseTime" },
+            },
+          },
+        ])
+        .toArray(),
+      col.findOne({}, { sort: { requestedAt: -1 }, projection: { requestedAt: 1 } }),
+    ]);
+
+    const row = agg[0];
+    if (!row) return { totalRequests: 0, successCount: 0, failureCount: 0, avgResponseTime: 0, lastRequestAt: null };
+
+    const total = Number(row.total);
+    const successCount = Number(row.successCount);
+    return {
+      totalRequests: total,
+      successCount,
+      failureCount: total - successCount,
+      avgResponseTime: Math.round(Number(row.avgResponseTime) || 0),
+      lastRequestAt: last?.requestedAt ?? null,
+    };
+  } catch (err) {
+    logger.warn({ err }, "stats: failed to get stats from MongoDB");
+    return { totalRequests: 0, successCount: 0, failureCount: 0, avgResponseTime: 0, lastRequestAt: null };
+  }
 }

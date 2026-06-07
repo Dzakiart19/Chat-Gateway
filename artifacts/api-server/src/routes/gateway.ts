@@ -205,7 +205,7 @@ router.post("/gateway/chat", async (req, res) => {
     responseHeaders,
     error,
   };
-  recordRequest(entry);
+  await recordRequest(entry);
 
   res.json({ id, success, statusCode, requestedAt, responseTime,
     endpoint: "chat/completions", method: "POST",
@@ -286,7 +286,7 @@ router.post("/gateway/proxy", async (req, res) => {
     endpoint, method: method.toUpperCase(), model: "",
     requestPayload: payload ?? null, responseBody, responseHeaders, error,
   };
-  recordRequest(entry);
+  await recordRequest(entry);
 
   res.json({ id, success, statusCode, requestedAt, responseTime,
     endpoint, method: method.toUpperCase(),
@@ -294,19 +294,19 @@ router.post("/gateway/proxy", async (req, res) => {
 });
 
 // GET /api/gateway/history
-router.get("/gateway/history", (req, res) => {
+router.get("/gateway/history", async (req, res) => {
   const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
-  res.json(getHistory(limit));
+  res.json(await getHistory(limit));
 });
 
 // DELETE /api/gateway/history
-router.delete("/gateway/history", (_req, res) => {
-  res.json({ cleared: clearHistory() });
+router.delete("/gateway/history", async (_req, res) => {
+  res.json({ cleared: await clearHistory() });
 });
 
 // GET /api/gateway/stats
-router.get("/gateway/stats", (_req, res) => {
-  res.json(getStats());
+router.get("/gateway/stats", async (_req, res) => {
+  res.json(await getStats());
 });
 
 // GET /api/gateway/token-pool — status of the rotating bx-umidtoken pool
