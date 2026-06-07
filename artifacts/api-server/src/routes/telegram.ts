@@ -54,17 +54,20 @@ router.post("/telegram/webhook/register", async (req, res) => {
 });
 
 export function buildWebhookUrl(): string | null {
-  const base =
-    process.env["BASE_URL"] ??
-    (process.env["REPLIT_DEV_DOMAIN"]
-      ? `https://${process.env["REPLIT_DEV_DOMAIN"]}`
-      : null) ??
-    (process.env["REPLIT_DOMAINS"]
-      ? `https://${process.env["REPLIT_DOMAINS"].split(",")[0]!.trim()}`
-      : null);
+  // BASE_URL always wins (manually set, e.g. production domain)
+  if (process.env["BASE_URL"]) {
+    const base = process.env["BASE_URL"].replace(/\/$/, "");
+    return `${base}/telegram/webhook`;
+  }
 
-  if (!base) return null;
-  return `${base.replace(/\/$/, "")}/telegram/webhook`;
+  // In Replit Autoscale/deployment, REPLIT_DEPLOYMENT=1 and REPLIT_DOMAINS has the prod domain
+  if (process.env["REPLIT_DEPLOYMENT"] === "1" && process.env["REPLIT_DOMAINS"]) {
+    const domain = process.env["REPLIT_DOMAINS"].split(",")[0]!.trim();
+    return `https://${domain}/telegram/webhook`;
+  }
+
+  // Dev environment — skip auto-registration, webhook managed manually
+  return null;
 }
 
 export async function registerWebhookOnStartup(): Promise<void> {
@@ -74,10 +77,10 @@ export async function registerWebhookOnStartup(): Promise<void> {
   }
   const webhookUrl = buildWebhookUrl();
   if (!webhookUrl) {
-    logger.warn(
-      "Cannot determine public URL for Telegram webhook. " +
-        "Set BASE_URL env var or deploy to Replit/Koyeb. " +
-        "Use POST /telegram/webhook/register to set manually.",
+    // Dev environment: don't overwrite the production webhook URL
+    logger.info(
+      "Dev environment — skipping Telegram webhook auto-registration. " +
+        "Set BASE_URL env var to force registration.",
     );
     return;
   }
