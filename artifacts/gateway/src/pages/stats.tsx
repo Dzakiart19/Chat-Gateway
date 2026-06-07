@@ -110,7 +110,7 @@ export default function Stats() {
                 </div>
                 <div className="grid grid-cols-[180px_1fr] px-5 py-3">
                   <div className="text-sm text-muted-foreground font-medium">History Limit</div>
-                  <div className="text-sm text-foreground">Last 200 requests (in-memory)</div>
+                  <div className="text-sm text-foreground">Unlimited (in-memory)</div>
                 </div>
               </div>
             </div>

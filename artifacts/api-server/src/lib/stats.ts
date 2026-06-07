@@ -14,15 +14,13 @@ export interface HistoryEntry {
 }
 
 const history: HistoryEntry[] = [];
-const MAX_HISTORY = 200;
 
 export function recordRequest(entry: HistoryEntry): void {
   history.unshift(entry);
-  if (history.length > MAX_HISTORY) history.splice(MAX_HISTORY);
 }
 
-export function getHistory(limit = 50): HistoryEntry[] {
-  return history.slice(0, limit);
+export function getHistory(limit?: number): HistoryEntry[] {
+  return limit ? history.slice(0, limit) : history;
 }
 
 export function clearHistory(): number {

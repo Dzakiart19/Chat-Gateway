@@ -295,7 +295,7 @@ router.post("/gateway/proxy", async (req, res) => {
 
 // GET /api/gateway/history
 router.get("/gateway/history", (req, res) => {
-  const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 50;
+  const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
   res.json(getHistory(limit));
 });
 
