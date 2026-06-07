@@ -96,7 +96,8 @@ async function revokeAllKeysForUser(userId: string) {
 function getApiBaseUrl(): string {
   if (process.env["BASE_URL"]) return process.env["BASE_URL"].replace(/\/$/, "");
   if (process.env["REPLIT_DOMAINS"]) return `https://${process.env["REPLIT_DOMAINS"].split(",")[0]!.trim()}`;
-  return "https://chat-gateway--tmi84kzh.replit.app";
+  if (process.env["REPLIT_DEV_DOMAIN"]) return `https://${process.env["REPLIT_DEV_DOMAIN"]}`;
+  return "http://localhost:5000";
 }
 
 // ── Message templates ────────────────────────────────────────────────────────
